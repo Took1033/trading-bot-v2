@@ -31,7 +31,7 @@ from interfaces import notifier
 load_dotenv()
 log = structlog.get_logger()
 
-SYMBOL              = os.getenv("TRADING_SYMBOL",          "BTC-USDC")
+DEFAULT_SYMBOL      = os.getenv("TRADING_SYMBOL",          "BTC-USDC")
 LOOP_INTERVAL_S     = int(os.getenv("LOOP_INTERVAL_S",      "60"))
 STOP_LOSS_PCT       = float(os.getenv("RISK_STOP_LOSS_PCT",      "0.03"))  # -3%
 TAKE_PROFIT_PCT     = float(os.getenv("RISK_TAKE_PROFIT_PCT",    "0.05"))  # +5%
@@ -47,18 +47,31 @@ _WARMUP_MILESTONES: frozenset[int] = frozenset({5, 10, 15, 20, 22})
 class Orchestrator:
     """Coordonne les agents via messages MCP et execute les ordres paper."""
 
-    def __init__(self) -> None:
-        self._market   = MarketAgent(symbol=SYMBOL)
+    def __init__(
+        self,
+        symbol:        str = DEFAULT_SYMBOL,
+        bot_id:        str = "main",
+        weight:        float = 1.0,
+        coinbase:      CoinbaseClient | None = None,
+        memory:        MemoryAgent | None    = None,
+    ) -> None:
+        self.symbol = symbol
+        self.bot_id = bot_id
+        self.weight = weight
+
+        self._market   = MarketAgent(symbol=symbol)
         self._risk     = RiskAgent()
-        self._memory   = MemoryAgent()
-        self._coinbase = CoinbaseClient()
+        # Partage CoinbaseClient et MemoryAgent entre bots (meme portefeuille + meme DB)
+        self._coinbase = coinbase or CoinbaseClient()
+        self._memory   = memory   or MemoryAgent()
 
         # Etat interne : confirmation de signal + cooldown + peaks
-        self._signal_streak: dict          = {"action": None, "count": 0}
-        self._last_trade_ts: float         = 0.0
+        self._signal_streak: dict             = {"action": None, "count": 0}
+        self._last_trade_ts: float            = 0.0
         self._position_peak: dict[str, float] = {}   # symbol -> prix max depuis l'entree
 
-        log.info("orchestrator_ready", symbol=SYMBOL, interval_s=LOOP_INTERVAL_S,
+        log.info("orchestrator_ready", symbol=self.symbol, bot_id=self.bot_id,
+                 weight=self.weight, interval_s=LOOP_INTERVAL_S,
                  stop_loss=f"{STOP_LOSS_PCT:.0%}", take_profit=f"{TAKE_PROFIT_PCT:.0%}",
                  trailing=f"{TRAILING_STOP_PCT:.0%} (active +{TRAILING_ACTIVATE:.0%})",
                  confirm_ticks=SIGNAL_CONFIRM, cooldown_s=TRADE_COOLDOWN_S)
@@ -72,10 +85,10 @@ class Orchestrator:
         Verifie SL fixe / TP fixe / trailing stop sur la position ouverte.
         Si l'un declenche, execute la vente forcee et retourne True.
         """
-        pos = self._coinbase.get_position(SYMBOL)
+        pos = self._coinbase.get_position(self.symbol)
         if not pos:
             # Plus de position - on nettoie le peak
-            self._position_peak.pop(SYMBOL, None)
+            self._position_peak.pop(self.symbol, None)
             return False
 
         entry = pos["avg_price"]
@@ -83,10 +96,10 @@ class Orchestrator:
         pct   = (price - entry) / entry
 
         # Track du peak
-        peak = self._position_peak.get(SYMBOL, entry)
+        peak = self._position_peak.get(self.symbol, entry)
         if price > peak:
             peak = price
-            self._position_peak[SYMBOL] = peak
+            self._position_peak[self.symbol] = peak
 
         # ── 1. Stop-loss fixe ────────────────────────────────────────────────
         if pct <= -STOP_LOSS_PCT:
@@ -138,14 +151,14 @@ class Orchestrator:
     async def _force_sell(self, qty: float, price: float, reason: str) -> None:
         """Execute une vente forcee (SL ou TP) et persiste la decision."""
         try:
-            order = await self._coinbase.place_order(SYMBOL, "sell", qty)
+            order = await self._coinbase.place_order(self.symbol, "sell", qty)
             pnl   = qty * (price - self._coinbase._paper.positions.get(
-                SYMBOL, {}).get("avg_price", price))
+                self.symbol, {}).get("avg_price", price))
 
             self._memory.record_decision(
                 role="orchestrator",
                 task_type="order",
-                symbol=SYMBOL,
+                symbol=self.symbol,
                 action="sell",
                 confidence=1.0,
                 reasoning=reason,
@@ -166,8 +179,8 @@ class Orchestrator:
         """Un cycle complet : SL/TP -> signal -> risque -> ordre -> snapshot."""
 
         # ── 0. Verifier la pause ──────────────────────────────────────────────
-        if trading_state.is_paused():
-            log.info("tick_paused", symbol=SYMBOL)
+        if trading_state.is_paused(self.bot_id):
+            log.info("tick_paused", symbol=self.symbol)
             return
 
         # ── 1. Control -> MarketAgent ─────────────────────────────────────────
@@ -175,7 +188,7 @@ class Orchestrator:
             "node_type":    "control",
             "sender":       "orchestrator",
             "receiver":     "market_agent",
-            "payload":      {"symbol": SYMBOL},
+            "payload":      {"symbol": self.symbol},
             "timeout_ms":   5000,
             "retry_budget": 2,
         }
@@ -210,14 +223,14 @@ class Orchestrator:
             else:
                 await notifier.notify(
                     f"✅ *Warm-up termine* - trading actif !\n"
-                    f"Symbole : `{SYMBOL}` | Prix : `{price:,.2f} USDC`"
+                    f"Symbole : `{self.symbol}` | Prix : `{price:,.2f} USDC`"
                 )
 
         # ── 5. Enregistrer le signal ──────────────────────────────────────────
         self._memory.record_decision(
             role="market_agent",
             task_type="signal",
-            symbol=SYMBOL,
+            symbol=self.symbol,
             action=signal["action"],
             confidence=signal["confidence"],
             reasoning=signal["reasoning"],
@@ -226,7 +239,7 @@ class Orchestrator:
 
         if signal["action"] == "hold":
             self._signal_streak = {"action": None, "count": 0}
-            log.info("tick_hold", symbol=SYMBOL, reasoning=signal["reasoning"][:60])
+            log.info("tick_hold", symbol=self.symbol, reasoning=signal["reasoning"][:60])
             return
 
         # ── 6. Confirmation sur N ticks consecutifs ───────────────────────────
@@ -255,7 +268,7 @@ class Orchestrator:
         rsi_val = signal.get("metadata", {}).get("rsi", "?")
         emoji   = "📈" if signal["action"] == "buy" else "📉"
         await notifier.notify(
-            f"{emoji} *Signal {signal['action'].upper()}* - `{SYMBOL}`\n"
+            f"{emoji} *Signal {signal['action'].upper()}* - `{self.symbol}`\n"
             f"Prix : `{price:,.2f} USDC` | RSI : `{rsi_val}`\n"
             f"Confiance : `{signal['confidence']:.0%}`\n"
             f"_{signal['reasoning'][:120]}_"
@@ -263,7 +276,7 @@ class Orchestrator:
 
         # ── 7. Evaluation du risque ───────────────────────────────────────────
         snapshot    = await self._coinbase.get_portfolio_snapshot()
-        last_action = self._memory.get_last_action_for_symbol(SYMBOL)
+        last_action = self._memory.get_last_action_for_symbol(self.symbol)
 
         risk_artifact = self._risk.evaluate(
             signal_action=signal["action"],
@@ -279,7 +292,7 @@ class Orchestrator:
         self._memory.record_decision(
             role="risk_agent",
             task_type="order",
-            symbol=SYMBOL,
+            symbol=self.symbol,
             action=signal["action"] if risk_payload["approved"] else "rejected",
             confidence=signal["confidence"],
             reasoning="; ".join(risk_payload["reasons"]) or "Approuve",
@@ -296,23 +309,23 @@ class Orchestrator:
             qty = risk_payload["qty"]
 
             if signal["action"] == "sell":
-                pos = snapshot["positions"].get(SYMBOL)
+                pos = snapshot["positions"].get(self.symbol)
                 if not pos:
-                    log.warning("no_position_to_sell", symbol=SYMBOL)
-                    await notifier.notify(f"⚠️ *Vente impossible* - aucune position `{SYMBOL}`")
+                    log.warning("no_position_to_sell", symbol=self.symbol)
+                    await notifier.notify(f"⚠️ *Vente impossible* - aucune position `{self.symbol}`")
                     return
                 qty = pos["qty"]
 
-            order = await self._coinbase.place_order(SYMBOL, signal["action"], qty)
+            order = await self._coinbase.place_order(self.symbol, signal["action"], qty)
             cost  = qty * price
 
             self._memory.record_decision(
                 role="orchestrator",
                 task_type="order",
-                symbol=SYMBOL,
+                symbol=self.symbol,
                 action=signal["action"],
                 confidence=signal["confidence"],
-                reasoning=f"Ordre execute : {signal['action']} {qty:.6f} {SYMBOL} @ {price:.2f} USDC",
+                reasoning=f"Ordre execute : {signal['action']} {qty:.6f} {self.symbol} @ {price:.2f} USDC",
                 metadata=(
                     f'{{"order_id":"{order.order_id}",'
                     f'"price":{round(price, 2)},'
@@ -325,13 +338,13 @@ class Orchestrator:
 
             # Reset du peak apres une vente (position fermee)
             if signal["action"] == "sell":
-                self._position_peak.pop(SYMBOL, None)
+                self._position_peak.pop(self.symbol, None)
             # Init du peak au prix d'achat
             elif signal["action"] == "buy":
-                self._position_peak[SYMBOL] = price
+                self._position_peak[self.symbol] = price
 
             log.info("order_executed", side=signal["action"],
-                     qty=round(qty, 6), price=round(price, 2), symbol=SYMBOL)
+                     qty=round(qty, 6), price=round(price, 2), symbol=self.symbol)
 
             await notifier.notify(
                 f"✅ *Ordre execute*\n"
@@ -346,11 +359,11 @@ class Orchestrator:
             self._memory.record_snapshot(new_snapshot)
 
         except Exception as exc:
-            log.error("order_failed", error=str(exc), symbol=SYMBOL)
+            log.error("order_failed", error=str(exc), symbol=self.symbol)
             self._memory.record_decision(
                 role="orchestrator",
                 task_type="alert",
-                symbol=SYMBOL,
+                symbol=self.symbol,
                 action=None,
                 confidence=0.0,
                 reasoning=f"Erreur ordre : {exc}",
@@ -365,13 +378,13 @@ class Orchestrator:
         """Demarre la boucle principale. Warm-up prefetch au lancement."""
 
         # Warm-up instantane : charge l'historique avant le premier tick
-        log.info("warmup_start", symbol=SYMBOL)
+        log.info("warmup_start", symbol=self.symbol)
         await self._market.warmup_from_history()
 
         if self._market.is_warmed_up:
             await notifier.notify(
                 f"✅ *Warm-up instantane* - `{len(self._market.price_history)}` prix charges\n"
-                f"Symbole : `{SYMBOL}` | Trading actif des le 1er tick"
+                f"Symbole : `{self.symbol}` | Trading actif des le 1er tick"
             )
         else:
             await notifier.notify(
@@ -379,7 +392,7 @@ class Orchestrator:
                 f"Il faudra `{22 - len(self._market.price_history)}` ticks supplementaires"
             )
 
-        log.info("orchestrator_loop_start", symbol=SYMBOL, interval_s=LOOP_INTERVAL_S)
+        log.info("orchestrator_loop_start", symbol=self.symbol, interval_s=LOOP_INTERVAL_S)
 
         try:
             while True:

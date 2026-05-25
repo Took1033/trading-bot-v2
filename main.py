@@ -42,20 +42,29 @@ DASHBOARD_ENABLED = os.getenv("DASHBOARD_ENABLED", "true").lower() in ("true", "
 
 
 async def main() -> None:
-    from agents.orchestrator    import Orchestrator
+    from agents.bot_swarm       import BotSwarm
+    from agents.director_agent  import DirectorAgent
     from agents.daily_summary   import daily_summary_loop
     from interfaces.notifier    import notify
 
-    orc = Orchestrator()
+    # ── Initialisation du swarm + director ──────────────────────────────────
+    swarm    = BotSwarm()
+    director = DirectorAgent(swarm)
+
+    # Exposer globalement pour le dashboard et Telegram
+    import sys
+    sys.modules["__main__"].SWARM    = swarm
+    sys.modules["__main__"].DIRECTOR = director
 
     # ── Sans token Telegram : mode headless ──────────────────────────────────
     if not TOKEN:
-        log.warning(
-            "telegram_disabled",
-            hint="Ajouter TELEGRAM_BOT_TOKEN dans .env pour activer le bot Telegram",
+        log.warning("telegram_disabled",
+                    hint="Ajouter TELEGRAM_BOT_TOKEN dans .env pour activer le bot Telegram")
+        log.info("starting_headless", mode=MODE, n_bots=len(swarm.bots))
+        await asyncio.gather(
+            swarm.run_all(),
+            director.run_forever(),
         )
-        log.info("starting_headless", mode=MODE)
-        await orc.run_forever()
         return
 
     # ── Avec Telegram : mode complet ─────────────────────────────────────────
@@ -63,24 +72,30 @@ async def main() -> None:
     from interfaces.telegram_bot import build_app
 
     tg_app = build_app()
-    log.info("bot_starting", mode=MODE, symbol=os.getenv("TRADING_SYMBOL", "BTC-USDC"))
+    log.info("bot_starting", mode=MODE, n_bots=len(swarm.bots),
+             bots=[b.symbol for b in swarm.bots])
 
     async with tg_app:
         await tg_app.start()
         await tg_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
 
+        bot_list = "\n".join(
+            f"  • `{b.bot_id.upper()}` ({b.symbol}, poids {b.weight:.0%})"
+            for b in swarm.bots
+        )
         await notify(
-            f"🤖 *Trading Bot v2 démarré*\n"
+            f"🤖 *Trading Bot v2 - Swarm démarré*\n"
             f"Mode : `{MODE.upper()}`\n"
-            f"Symbole : `{os.getenv('TRADING_SYMBOL', 'BTC-USDC')}`\n"
-            f"Intervalle : `{os.getenv('LOOP_INTERVAL_S', '60')}s`\n"
+            f"Bots actifs :\n{bot_list}\n"
+            f"Director Agent : Kill Switch activé\n"
             f"Logs : `logs/trading.log`\n\n"
-            f"Tape /start pour voir les commandes ou /register pour activer les notifs."
+            f"Tape /bots pour voir l'état du swarm."
         )
 
-        # Lancer orchestrateur + daily summary + dashboard en parallele
+        # Lancer swarm + director + daily summary + dashboard en parallele
         tasks = [
-            orc.run_forever(),
+            swarm.run_all(),
+            director.run_forever(),
             daily_summary_loop(),
         ]
         if DASHBOARD_ENABLED:
