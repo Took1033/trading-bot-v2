@@ -70,6 +70,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "`/register`  — activer les notifications\n"
         "`/status`    — état complet (RSI, EMA, position, cooldown)\n"
         "`/positions` — positions ouvertes avec P&L live\n"
+        "`/metrics`   — performances globales (WR, DD, etc.)\n"
         "`/decisions` — dernières décisions\n"
         "`/backtest`  — backtest 30j sur BTC-USD\n"
         "`/price`     — prix actuel BTC-USDC\n"
@@ -390,6 +391,116 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Affiche les metriques de performance globales du bot."""
+    try:
+        with _db() as conn:
+            # Tous les ordres executes
+            buys = conn.execute(
+                "SELECT timestamp, metadata FROM decisions "
+                "WHERE role='orchestrator' AND task_type='order' AND action='buy' "
+                "ORDER BY timestamp ASC"
+            ).fetchall()
+            sells = conn.execute(
+                "SELECT timestamp, metadata FROM decisions "
+                "WHERE role='orchestrator' AND task_type='order' AND action='sell' "
+                "ORDER BY timestamp ASC"
+            ).fetchall()
+
+            # Snapshots pour le drawdown
+            snaps = conn.execute(
+                "SELECT total_usdc, timestamp FROM portfolio_snapshots "
+                "ORDER BY timestamp ASC"
+            ).fetchall()
+
+            # Rejets et alertes
+            rejected_count = conn.execute(
+                "SELECT COUNT(*) FROM decisions WHERE action='rejected'"
+            ).fetchone()[0]
+            alerts_count = conn.execute(
+                "SELECT COUNT(*) FROM decisions WHERE task_type='alert'"
+            ).fetchone()[0]
+    except Exception as exc:
+        await update.message.reply_text(f"❌ Erreur DB : `{exc}`", parse_mode="Markdown")
+        return
+
+    if not snaps:
+        await update.message.reply_text(
+            "_Aucun trade enregistré — pas encore de métriques disponibles._",
+            parse_mode="Markdown",
+        )
+        return
+
+    # Pairing buy/sell pour P&L par trade
+    import re
+    def _extract_price(meta_str: str) -> float | None:
+        m = re.search(r'"price":\s*([\d.]+)', meta_str or "")
+        return float(m.group(1)) if m else None
+
+    def _extract_qty(meta_str: str) -> float | None:
+        m = re.search(r'"qty":\s*([\d.]+)', meta_str or "")
+        return float(m.group(1)) if m else None
+
+    trades_pnl: list[float] = []
+    n = min(len(buys), len(sells))
+    for i in range(n):
+        bp, bq = _extract_price(buys[i]["metadata"]),  _extract_qty(buys[i]["metadata"])
+        sp, sq = _extract_price(sells[i]["metadata"]), _extract_qty(sells[i]["metadata"])
+        if bp and sp and bq:
+            trades_pnl.append(sp - bp)   # P&L par unite
+
+    n_trades  = len(trades_pnl)
+    n_wins    = sum(1 for p in trades_pnl if p > 0)
+    win_rate  = (n_wins / n_trades * 100) if n_trades else 0.0
+    avg_pnl   = (sum(trades_pnl) / n_trades) if n_trades else 0.0
+
+    # Drawdown max
+    peak = snaps[0]["total_usdc"]
+    max_dd = 0.0
+    for s in snaps:
+        v = s["total_usdc"]
+        if v > peak:
+            peak = v
+        if peak > 0:
+            dd = (peak - v) / peak * 100
+            if dd > max_dd:
+                max_dd = dd
+
+    # P&L total
+    initial = snaps[0]["total_usdc"]
+    current = snaps[-1]["total_usdc"]
+    total_pct = (current - initial) / initial * 100 if initial > 0 else 0.0
+    total_abs = current - initial
+
+    # Duree
+    from datetime import datetime as dt
+    try:
+        first_ts = dt.fromisoformat(snaps[0]["timestamp"].replace("Z", "+00:00"))
+        days     = (datetime.now(timezone.utc) - first_ts).total_seconds() / 86400
+    except Exception:
+        days = 0
+
+    emoji = "🟢" if total_pct >= 0 else "🔴"
+    msg = (
+        f"📊 *Métriques globales*\n\n"
+        f"*Performance*\n"
+        f"  Capital initial : `{initial:,.2f}` USDC\n"
+        f"  Capital actuel  : `{current:,.2f}` USDC\n"
+        f"  P&L total       : {emoji} `{total_abs:+,.2f}` USDC (`{total_pct:+.2f}%`)\n"
+        f"  Max drawdown    : `{max_dd:.2f}%`\n"
+        f"  Durée trading   : `{days:.1f}` jours\n\n"
+        f"*Trades*\n"
+        f"  Trades fermés   : `{n_trades}`\n"
+        f"  Gagnants        : `{n_wins}` (WR = `{win_rate:.1f}%`)\n"
+        f"  P&L moyen/trade : `{avg_pnl:+,.2f}` USDC/unité\n\n"
+        f"*Filtres*\n"
+        f"  Ordres rejetés  : `{rejected_count}`\n"
+        f"  Alertes erreurs : `{alerts_count}`"
+    )
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
 async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Lance un backtest 30 jours sur BTC-USD."""
     await update.message.reply_text(
@@ -444,6 +555,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("decisions", cmd_decisions))
     app.add_handler(CommandHandler("positions", cmd_positions))
     app.add_handler(CommandHandler("backtest",  cmd_backtest))
+    app.add_handler(CommandHandler("metrics",   cmd_metrics))
     app.add_handler(CommandHandler("price",     cmd_price))
     app.add_handler(CommandHandler("pnl",       cmd_pnl))
     app.add_handler(CommandHandler("mode",      cmd_mode))

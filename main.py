@@ -1,21 +1,23 @@
 """
-main.py — Point d'entrée unifié du Trading Bot v2.
+main.py - Point d'entree unifie du Trading Bot v2.
 
-Lance en parallèle dans la même boucle asyncio :
-  - L'Orchestrateur   (boucle de trading : signal → risque → ordre → DB)
-  - Le Bot Telegram   (commandes utilisateur + notifications)
+Lance en parallele dans la meme boucle asyncio :
+  - L'Orchestrateur     (boucle de trading : signal -> risque -> ordre -> DB)
+  - Le Bot Telegram     (commandes utilisateur + notifications)
+  - Le Daily Summary    (resume quotidien a heure fixe)
 
 Usage :
     python main.py
 
 Variables d'env requises (.env) :
-    TELEGRAM_BOT_TOKEN   — token BotFather
-    COINBASE_MODE        — "paper" (défaut) | "live"
+    TELEGRAM_BOT_TOKEN   - token BotFather
+    COINBASE_MODE        - "paper" (defaut) | "live"
 
 Variables optionnelles :
-    TELEGRAM_CHAT_ID     — pour les notifications (ou utilise /register dans le bot)
-    TRADING_SYMBOL       — symbole (défaut: BTC-USDC)
-    LOOP_INTERVAL_S      — intervalle de trading en secondes (défaut: 60)
+    TELEGRAM_CHAT_ID         - notifications (ou /register dans le bot)
+    TRADING_SYMBOL           - symbole (defaut: BTC-USDC)
+    LOOP_INTERVAL_S          - intervalle de trading (defaut: 60)
+    DAILY_SUMMARY_HOUR_UTC   - heure UTC du resume quotidien (defaut: 9)
 """
 from __future__ import annotations
 
@@ -23,19 +25,25 @@ import asyncio
 import os
 import sys
 
-import structlog
 from dotenv import load_dotenv
 
 load_dotenv()
-log = structlog.get_logger()
 
+# Configurer le logging AVANT tout autre import qui logge
+from logging_config import configure_logging
+configure_logging()
+
+import structlog
+
+log   = structlog.get_logger()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 MODE  = os.getenv("COINBASE_MODE", "paper")
 
 
 async def main() -> None:
-    from agents.orchestrator import Orchestrator
-    from interfaces.notifier import notify
+    from agents.orchestrator    import Orchestrator
+    from agents.daily_summary   import daily_summary_loop
+    from interfaces.notifier    import notify
 
     orc = Orchestrator()
 
@@ -60,20 +68,22 @@ async def main() -> None:
         await tg_app.start()
         await tg_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
 
-        # Message de démarrage
         await notify(
             f"🤖 *Trading Bot v2 démarré*\n"
             f"Mode : `{MODE.upper()}`\n"
             f"Symbole : `{os.getenv('TRADING_SYMBOL', 'BTC-USDC')}`\n"
-            f"Intervalle : `{os.getenv('LOOP_INTERVAL_S', '60')}s`\n\n"
-            f"Tape /status pour l'état ou /register si tu ne reçois pas ce message."
+            f"Intervalle : `{os.getenv('LOOP_INTERVAL_S', '60')}s`\n"
+            f"Logs : `logs/trading.log`\n\n"
+            f"Tape /start pour voir les commandes ou /register pour activer les notifs."
         )
 
+        # Lancer orchestrateur + daily summary en parallele
         try:
-            await orc.run_forever()
-        except (KeyboardInterrupt, SystemExit):
-            pass
-        except asyncio.CancelledError:
+            await asyncio.gather(
+                orc.run_forever(),
+                daily_summary_loop(),
+            )
+        except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
             pass
         finally:
             log.info("bot_shutting_down")
