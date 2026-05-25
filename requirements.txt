@@ -1,0 +1,25 @@
+# === Core ===
+python-dotenv>=1.0.0
+aiohttp>=3.9.0
+
+# === Telegram ===
+python-telegram-bot>=21.0.0
+
+# === Anthropic / Claude ===
+anthropic>=0.40.0
+
+# === Coinbase ===
+coinbase-advanced-py>=1.4.0
+
+# === Data / Trading ===
+pandas>=2.2.0
+numpy>=1.26.0
+ta>=0.11.0          # indicateurs techniques
+
+# === Persistance ===
+# SQLite inclus dans Python stdlib — pas de dépendance externe
+
+# === Utilitaires ===
+pydantic>=2.6.0     # validation des données agent
+structlog>=24.1.0   # logs structurés JSON
+schedule>=1.2.0     # planification légère

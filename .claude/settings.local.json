@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m venv .venv)",
+      "Bash(where py *)",
+      "Bash(where python3 *)",
+      "Bash(py --version)",
+      "PowerShell(python3 --version)"
+    ]
+  }
+}

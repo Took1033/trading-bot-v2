@@ -1,0 +1,32 @@
+# Secrets
+.env
+*.env
+_new_telegram_token.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Base de données locale
+memory/*.db
+memory/*.db-journal
+
+# Config Telegram (chat_id privé)
+memory/telegram_config.json
+
+# Logs
+logs/*.log
+logs/*.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
