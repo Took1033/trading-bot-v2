@@ -43,10 +43,13 @@ class Signal:
 
 EMA_FAST        = 9
 EMA_SLOW        = 21
+EMA_TREND       = 50     # Filtre tendance long-terme
 RSI_PERIOD      = 14
 RSI_OVERBOUGHT  = 70.0   # BUY bloque au-dessus
 RSI_OVERSOLD    = 30.0   # SELL bloque en-dessous
-MIN_POINTS      = EMA_SLOW + 1    # 22 points minimum
+VOL_MIN_PCT     = 0.10   # Volatilite min : std/price >= 0.10% (sinon marche plat)
+MIN_POINTS      = EMA_SLOW + 1   # 22 points minimum pour signal de base
+MIN_POINTS_FULL = EMA_TREND + 1  # 51 points pour avoir le trend filter actif
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,18 +131,60 @@ async def analyze(symbol: str, prices: list[float]) -> Signal:
 
     curr_diff = float(ema_fast[-1] - ema_slow[-1])
     prev_diff = float(ema_fast[-2] - ema_slow[-2])
+    price     = float(arr[-1])
+
+    # EMA50 disponible uniquement avec >= 51 points
+    has_trend  = len(prices) >= MIN_POINTS_FULL
+    ema_trend  = float(_ema(arr, EMA_TREND)[-1]) if has_trend else None
+    trend_up   = (ema_trend is not None) and (price > ema_trend)
+    trend_down = (ema_trend is not None) and (price < ema_trend)
+
+    # Volatilite : ecart-type relatif des 20 derniers prix (%)
+    recent     = arr[-20:] if len(arr) >= 20 else arr
+    vol_pct    = float(np.std(recent) / price * 100) if price > 0 else 0.0
+    too_flat   = vol_pct < VOL_MIN_PCT
 
     meta = {
-        "ema_fast": round(float(ema_fast[-1]), 2),
-        "ema_slow": round(float(ema_slow[-1]), 2),
-        "diff":     round(curr_diff, 2),
-        "rsi":      round(rsi, 1),
-        "price":    round(float(arr[-1]), 2),
-        "n_points": len(prices),
+        "ema_fast":  round(float(ema_fast[-1]), 2),
+        "ema_slow":  round(float(ema_slow[-1]), 2),
+        "ema_trend": round(ema_trend, 2) if ema_trend else None,
+        "diff":      round(curr_diff, 2),
+        "rsi":       round(rsi, 1),
+        "vol_pct":   round(vol_pct, 3),
+        "price":     round(price, 2),
+        "n_points":  len(prices),
     }
+
+    # ── Filtre volatilite globale (s'applique a tout signal) ─────────────────
+    if too_flat:
+        return Signal(
+            action="hold",
+            confidence=0.3,
+            reasoning=(
+                f"Marche trop plat - vol={vol_pct:.3f}% < min {VOL_MIN_PCT}% "
+                f"(eviter whipsaws)"
+            ),
+            symbol=symbol,
+            metadata=meta,
+        )
 
     # ── Golden cross : EMA9 passe au-dessus d'EMA21 ──────────────────────────
     if prev_diff <= 0 and curr_diff > 0:
+        # Filtre tendance : ne BUY que si le prix est au-dessus de l'EMA50
+        if has_trend and not trend_up:
+            log.info("signal_filtered", symbol=symbol, action="buy->hold",
+                     reason="downtrend", price=price, ema_trend=ema_trend)
+            return Signal(
+                action="hold",
+                confidence=0.5,
+                reasoning=(
+                    f"Golden cross filtre - prix {price:.2f} < EMA{EMA_TREND}={ema_trend:.2f} "
+                    f"(downtrend, eviter contre-tendance)"
+                ),
+                symbol=symbol,
+                metadata=meta,
+            )
+
         if rsi >= RSI_OVERBOUGHT:
             log.info("signal_filtered", symbol=symbol, action="buy->hold",
                      reason="RSI overbought", rsi=round(rsi, 1))
@@ -155,6 +200,9 @@ async def analyze(symbol: str, prices: list[float]) -> Signal:
             )
 
         confidence = _crossover_confidence(curr_diff, ema_slow[-1], rsi)
+        # Boost +5% si le trend filter confirme
+        if has_trend and trend_up:
+            confidence = float(round(min(confidence + 0.05, 0.95), 4))
         log.info("signal_generated", symbol=symbol, action="buy",
                  confidence=confidence, **meta)
         return Signal(
@@ -170,6 +218,21 @@ async def analyze(symbol: str, prices: list[float]) -> Signal:
 
     # ── Death cross : EMA9 passe en-dessous d'EMA21 ──────────────────────────
     if prev_diff >= 0 and curr_diff < 0:
+        # Filtre tendance : ne SELL que si le prix est en-dessous de l'EMA50
+        if has_trend and not trend_down:
+            log.info("signal_filtered", symbol=symbol, action="sell->hold",
+                     reason="uptrend", price=price, ema_trend=ema_trend)
+            return Signal(
+                action="hold",
+                confidence=0.5,
+                reasoning=(
+                    f"Death cross filtre - prix {price:.2f} > EMA{EMA_TREND}={ema_trend:.2f} "
+                    f"(uptrend, garder la position)"
+                ),
+                symbol=symbol,
+                metadata=meta,
+            )
+
         if rsi <= RSI_OVERSOLD:
             log.info("signal_filtered", symbol=symbol, action="sell->hold",
                      reason="RSI oversold", rsi=round(rsi, 1))
@@ -185,6 +248,9 @@ async def analyze(symbol: str, prices: list[float]) -> Signal:
             )
 
         confidence = _crossover_confidence(curr_diff, ema_slow[-1], rsi)
+        # Boost +5% si le trend filter confirme
+        if has_trend and trend_down:
+            confidence = float(round(min(confidence + 0.05, 0.95), 4))
         log.info("signal_generated", symbol=symbol, action="sell",
                  confidence=confidence, **meta)
         return Signal(

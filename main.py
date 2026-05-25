@@ -36,8 +36,9 @@ configure_logging()
 import structlog
 
 log   = structlog.get_logger()
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-MODE  = os.getenv("COINBASE_MODE", "paper")
+TOKEN             = os.getenv("TELEGRAM_BOT_TOKEN", "")
+MODE              = os.getenv("COINBASE_MODE", "paper")
+DASHBOARD_ENABLED = os.getenv("DASHBOARD_ENABLED", "true").lower() in ("true", "1", "yes")
 
 
 async def main() -> None:
@@ -77,12 +78,18 @@ async def main() -> None:
             f"Tape /start pour voir les commandes ou /register pour activer les notifs."
         )
 
-        # Lancer orchestrateur + daily summary en parallele
+        # Lancer orchestrateur + daily summary + dashboard en parallele
+        tasks = [
+            orc.run_forever(),
+            daily_summary_loop(),
+        ]
+        if DASHBOARD_ENABLED:
+            from interfaces.dashboard import run_dashboard
+            tasks.append(run_dashboard())
+            log.info("dashboard_enabled", port=int(os.getenv("DASHBOARD_PORT", "8080")))
+
         try:
-            await asyncio.gather(
-                orc.run_forever(),
-                daily_summary_loop(),
-            )
+            await asyncio.gather(*tasks)
         except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
             pass
         finally:
