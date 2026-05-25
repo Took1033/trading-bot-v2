@@ -33,8 +33,10 @@ log = structlog.get_logger()
 
 SYMBOL              = os.getenv("TRADING_SYMBOL",          "BTC-USDC")
 LOOP_INTERVAL_S     = int(os.getenv("LOOP_INTERVAL_S",      "60"))
-STOP_LOSS_PCT       = float(os.getenv("RISK_STOP_LOSS_PCT",      "0.03"))  # 3%
-TAKE_PROFIT_PCT     = float(os.getenv("RISK_TAKE_PROFIT_PCT",    "0.05"))  # 5%
+STOP_LOSS_PCT       = float(os.getenv("RISK_STOP_LOSS_PCT",      "0.03"))  # -3%
+TAKE_PROFIT_PCT     = float(os.getenv("RISK_TAKE_PROFIT_PCT",    "0.05"))  # +5%
+TRAILING_STOP_PCT   = float(os.getenv("RISK_TRAILING_STOP_PCT",  "0.02"))  # -2% depuis peak
+TRAILING_ACTIVATE   = float(os.getenv("RISK_TRAILING_ACTIVATE",  "0.02"))  # active a +2% au-dessus entree
 SIGNAL_CONFIRM      = int(os.getenv("SIGNAL_CONFIRM_TICKS",      "2"))     # ticks de confirmation
 TRADE_COOLDOWN_S    = int(os.getenv("TRADE_COOLDOWN_S",          "300"))   # 5 min entre trades
 
@@ -51,12 +53,14 @@ class Orchestrator:
         self._memory   = MemoryAgent()
         self._coinbase = CoinbaseClient()
 
-        # Etat interne : confirmation de signal + cooldown
-        self._signal_streak: dict = {"action": None, "count": 0}
-        self._last_trade_ts: float = 0.0
+        # Etat interne : confirmation de signal + cooldown + peaks
+        self._signal_streak: dict          = {"action": None, "count": 0}
+        self._last_trade_ts: float         = 0.0
+        self._position_peak: dict[str, float] = {}   # symbol -> prix max depuis l'entree
 
         log.info("orchestrator_ready", symbol=SYMBOL, interval_s=LOOP_INTERVAL_S,
                  stop_loss=f"{STOP_LOSS_PCT:.0%}", take_profit=f"{TAKE_PROFIT_PCT:.0%}",
+                 trailing=f"{TRAILING_STOP_PCT:.0%} (active +{TRAILING_ACTIVATE:.0%})",
                  confirm_ticks=SIGNAL_CONFIRM, cooldown_s=TRADE_COOLDOWN_S)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -65,30 +69,40 @@ class Orchestrator:
 
     async def _check_sl_tp(self, price: float) -> bool:
         """
-        Verifie si une position ouverte a atteint le stop-loss ou take-profit.
-        Si oui, execute la vente forcee et retourne True (tick termine).
+        Verifie SL fixe / TP fixe / trailing stop sur la position ouverte.
+        Si l'un declenche, execute la vente forcee et retourne True.
         """
         pos = self._coinbase.get_position(SYMBOL)
         if not pos:
+            # Plus de position - on nettoie le peak
+            self._position_peak.pop(SYMBOL, None)
             return False
 
-        entry  = pos["avg_price"]
-        qty    = pos["qty"]
-        pct    = (price - entry) / entry
+        entry = pos["avg_price"]
+        qty   = pos["qty"]
+        pct   = (price - entry) / entry
 
+        # Track du peak
+        peak = self._position_peak.get(SYMBOL, entry)
+        if price > peak:
+            peak = price
+            self._position_peak[SYMBOL] = peak
+
+        # ── 1. Stop-loss fixe ────────────────────────────────────────────────
         if pct <= -STOP_LOSS_PCT:
-            reason = f"STOP-LOSS declenche ({pct:+.2%} depuis {entry:,.2f} USDC)"
+            reason = f"STOP-LOSS ({pct:+.2%} depuis {entry:,.2f})"
             log.warning("stop_loss_triggered", pct=round(pct, 4), entry=entry, price=price)
             await notifier.notify(
                 f"🛑 *STOP-LOSS*\n"
                 f"`{pct:+.2%}` depuis entree `{entry:,.2f}` USDC\n"
-                f"Vente forcee : `{qty:.6f}` BTC @ `{price:,.2f}` USDC"
+                f"Vente : `{qty:.6f}` BTC @ `{price:,.2f}` USDC"
             )
             await self._force_sell(qty, price, reason)
             return True
 
+        # ── 2. Take-profit fixe (cap haut) ───────────────────────────────────
         if pct >= TAKE_PROFIT_PCT:
-            reason = f"TAKE-PROFIT declenche ({pct:+.2%} depuis {entry:,.2f} USDC)"
+            reason = f"TAKE-PROFIT ({pct:+.2%} depuis {entry:,.2f})"
             log.info("take_profit_triggered", pct=round(pct, 4), entry=entry, price=price)
             await notifier.notify(
                 f"💰 *TAKE-PROFIT*\n"
@@ -97,6 +111,27 @@ class Orchestrator:
             )
             await self._force_sell(qty, price, reason)
             return True
+
+        # ── 3. Trailing stop (actif uniquement au-dessus du seuil) ───────────
+        if peak >= entry * (1 + TRAILING_ACTIVATE):
+            trailing_stop = peak * (1 - TRAILING_STOP_PCT)
+            if price <= trailing_stop:
+                drop_from_peak = (price - peak) / peak
+                reason = (
+                    f"TRAILING-STOP (peak={peak:,.2f}, drop={drop_from_peak:+.2%}, "
+                    f"P&L={pct:+.2%})"
+                )
+                log.info("trailing_stop_triggered",
+                         peak=peak, price=price, pct=round(pct, 4))
+                await notifier.notify(
+                    f"📍 *TRAILING-STOP*\n"
+                    f"Peak atteint : `{peak:,.2f}` USDC\n"
+                    f"Prix actuel  : `{price:,.2f}` USDC (`{drop_from_peak:+.2%}` depuis peak)\n"
+                    f"P&L final    : `{pct:+.2%}` depuis entree `{entry:,.2f}`\n"
+                    f"Vente : `{qty:.6f}` BTC"
+                )
+                await self._force_sell(qty, price, reason)
+                return True
 
         return False
 
@@ -287,6 +322,13 @@ class Orchestrator:
 
             self._last_trade_ts = time.time()
             self._signal_streak = {"action": None, "count": 0}   # reset apres trade
+
+            # Reset du peak apres une vente (position fermee)
+            if signal["action"] == "sell":
+                self._position_peak.pop(SYMBOL, None)
+            # Init du peak au prix d'achat
+            elif signal["action"] == "buy":
+                self._position_peak[SYMBOL] = price
 
             log.info("order_executed", side=signal["action"],
                      qty=round(qty, 6), price=round(price, 2), symbol=SYMBOL)

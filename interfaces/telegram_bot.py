@@ -68,8 +68,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "🤖 *Trading Bot v2*\n\n"
         "Commandes disponibles :\n"
         "`/register`  — activer les notifications\n"
-        "`/status`    — état du bot\n"
+        "`/status`    — état complet (RSI, EMA, position, cooldown)\n"
+        "`/positions` — positions ouvertes avec P&L live\n"
         "`/decisions` — dernières décisions\n"
+        "`/backtest`  — backtest 30j sur BTC-USD\n"
         "`/price`     — prix actuel BTC-USDC\n"
         "`/pnl`       — P&L du portefeuille\n"
         "`/mode`      — mode paper/live\n"
@@ -113,13 +115,19 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 "SELECT COUNT(*) FROM decisions"
             ).fetchone()[0]
             last_signal = conn.execute(
-                "SELECT action, confidence, timestamp FROM decisions "
+                "SELECT action, confidence, timestamp, metadata FROM decisions "
                 "WHERE task_type='signal' ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+            last_order = conn.execute(
+                "SELECT timestamp, action FROM decisions "
+                "WHERE task_type='order' AND role='orchestrator' "
+                "ORDER BY timestamp DESC LIMIT 1"
             ).fetchone()
     except Exception:
         snap = None
         decision_count = 0
         last_signal = None
+        last_order = None
 
     # État de la pause
     try:
@@ -131,24 +139,50 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     lines = [
         f"*Trading Bot v2* — {now}",
         f"Mode : `{MODE.upper()}` | Statut : {paused_txt}",
-        f"Décisions enregistrées : `{decision_count}`",
+        f"Décisions DB : `{decision_count}`",
     ]
 
+    # Indicateurs techniques depuis le dernier signal
     if last_signal:
         conf = f"{last_signal['confidence']:.0%}" if last_signal["confidence"] else "—"
+        meta_str = last_signal["metadata"] or ""
+        # Extraire RSI et EMA depuis la metadata (format dict en str)
+        import re
+        rsi   = re.search(r"'rsi':\s*([\d.]+)",     meta_str)
+        emaf  = re.search(r"'ema_fast':\s*([\d.]+)", meta_str)
+        emas  = re.search(r"'ema_slow':\s*([\d.]+)", meta_str)
         lines.append(
-            f"Dernier signal : `{last_signal['action']}` ({conf}) "
-            f"à `{last_signal['timestamp'][:16]}`"
+            f"\n*Dernier signal* (`{last_signal['timestamp'][:16]}`)\n"
+            f"  Action : `{last_signal['action']}` | Confiance : `{conf}`"
         )
+        if rsi:
+            lines.append(f"  RSI : `{rsi.group(1)}`")
+        if emaf and emas:
+            lines.append(f"  EMA9 : `{emaf.group(1)}` | EMA21 : `{emas.group(1)}`")
+
+    # Cooldown
+    if last_order:
+        try:
+            from datetime import datetime as dt
+            ts = dt.fromisoformat(last_order["timestamp"].replace("Z", "+00:00"))
+            elapsed = (datetime.now(timezone.utc) - ts).total_seconds()
+            cooldown = int(os.getenv("TRADE_COOLDOWN_S", "300"))
+            if elapsed < cooldown:
+                remaining = int(cooldown - elapsed)
+                lines.append(f"\n⏳ Cooldown : `{remaining}s` restants ({last_order['action']})")
+            else:
+                lines.append(f"\nDernier ordre : `{last_order['action']}` il y a `{int(elapsed)}s`")
+        except Exception:
+            pass
 
     if snap:
         lines += [
-            f"\n*Dernier snapshot* : `{snap['timestamp'][:16]}`",
-            f"Portefeuille : `{snap['total_usdc']:.2f} USDC`",
-            f"P&L : `{snap['pnl_pct']:+.2f}%`" if snap["pnl_pct"] else "P&L : —",
+            f"\n*Portefeuille*",
+            f"  Total : `{snap['total_usdc']:.2f} USDC`",
+            f"  P&L   : `{snap['pnl_pct']:+.2f}%`" if snap["pnl_pct"] is not None else "  P&L : —",
         ]
     else:
-        lines.append("\n_Aucun snapshot de portefeuille — aucun ordre exécuté._")
+        lines.append("\n_Aucun snapshot — aucun trade exécuté._")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -290,6 +324,107 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(f"❌ Erreur : `{exc}`", parse_mode="Markdown")
 
 
+async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Affiche les positions ouvertes avec P&L live."""
+    try:
+        with _db() as conn:
+            snap = conn.execute(
+                "SELECT positions, timestamp FROM portfolio_snapshots "
+                "ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+    except Exception:
+        snap = None
+
+    if not snap:
+        await update.message.reply_text(
+            "_Aucune position — pas encore de trade exécuté._",
+            parse_mode="Markdown",
+        )
+        return
+
+    try:
+        positions = json.loads(snap["positions"])
+    except Exception:
+        positions = {}
+
+    if not positions:
+        await update.message.reply_text(
+            "_Aucune position ouverte actuellement._",
+            parse_mode="Markdown",
+        )
+        return
+
+    # Prix live pour P&L
+    try:
+        current_price = await _fetch_btc_price()
+    except Exception:
+        current_price = None
+
+    lines = [f"*Positions ouvertes* (snapshot `{snap['timestamp'][:16]}`)"]
+    for sym, pos in positions.items():
+        qty   = pos["qty"]
+        entry = pos["avg_price"]
+        cost  = qty * entry
+
+        if current_price and "BTC" in sym:
+            value   = qty * current_price
+            pnl     = value - cost
+            pnl_pct = (current_price - entry) / entry * 100
+            emoji   = "🟢" if pnl >= 0 else "🔴"
+            lines.append(
+                f"\n{emoji} `{sym}`\n"
+                f"  Quantité : `{qty:.6f}`\n"
+                f"  Entrée   : `{entry:,.2f}` USDC\n"
+                f"  Actuel   : `{current_price:,.2f}` USDC\n"
+                f"  Valeur   : `{value:,.2f}` USDC\n"
+                f"  P&L      : `{pnl:+,.2f}` USDC (`{pnl_pct:+.2f}%`)"
+            )
+        else:
+            lines.append(
+                f"\n`{sym}`\n"
+                f"  Quantité : `{qty:.6f}`\n"
+                f"  Entrée   : `{entry:,.2f}` USDC\n"
+                f"  Coût     : `{cost:,.2f}` USDC"
+            )
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lance un backtest 30 jours sur BTC-USD."""
+    await update.message.reply_text(
+        "⏳ Lancement du backtest 30j sur BTC-USD…",
+        parse_mode="Markdown",
+    )
+
+    try:
+        from strategies.backtester import Backtester, fetch_prices_coinbase
+        from strategies.simple_ma import analyze
+
+        prices = await fetch_prices_coinbase("BTC-USD", granularity=86400, limit=30)
+        bt     = Backtester(strategy=analyze, initial_usdc=10_000.0)
+        result = await bt.run("BTC-USD", prices)
+
+        emoji = "🟢" if result.total_return >= 0 else "🔴"
+        msg = (
+            f"{emoji} *Backtest BTC-USD (30j)*\n\n"
+            f"Capital initial : `{result.initial_usdc:,.2f}` USDC\n"
+            f"Capital final   : `{result.final_usdc:,.2f}` USDC\n"
+            f"Rendement       : `{result.total_return:+.2f}%`\n"
+            f"Trades fermés   : `{result.n_trades}` "
+            f"({result.n_wins} gagnants, WR=`{result.win_rate:.1f}%`)\n"
+            f"Max drawdown    : `{result.max_drawdown:.2f}%`\n\n"
+            f"_Stratégie : EMA 9/21 + RSI filter_"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as exc:
+        log.error("backtest_failed", error=str(exc))
+        await update.message.reply_text(
+            f"❌ Erreur backtest : `{exc}`",
+            parse_mode="Markdown",
+        )
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Construction de l'application
 # ──────────────────────────────────────────────────────────────────────────────
@@ -307,6 +442,8 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("register",  cmd_register))
     app.add_handler(CommandHandler("status",    cmd_status))
     app.add_handler(CommandHandler("decisions", cmd_decisions))
+    app.add_handler(CommandHandler("positions", cmd_positions))
+    app.add_handler(CommandHandler("backtest",  cmd_backtest))
     app.add_handler(CommandHandler("price",     cmd_price))
     app.add_handler(CommandHandler("pnl",       cmd_pnl))
     app.add_handler(CommandHandler("mode",      cmd_mode))
