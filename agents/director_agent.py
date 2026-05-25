@@ -19,6 +19,7 @@ import os
 import time
 from collections import deque
 
+import aiohttp
 import structlog
 from dotenv import load_dotenv
 
@@ -39,6 +40,9 @@ MAX_HOURLY_LOSS_PCT = float(os.getenv("KILL_MAX_HOURLY_LOSS",   "0.03"))   # 3%
 MAX_DAILY_LOSS_PCT  = float(os.getenv("KILL_MAX_DAILY_LOSS",    "0.10"))   # 10%
 RESUME_AFTER_MIN    = int(os.getenv("KILL_RESUME_AFTER_MIN",    "60"))     # 60 min
 CHECK_INTERVAL_S    = int(os.getenv("DIRECTOR_CHECK_INTERVAL_S", "30"))    # 30s
+FG_CACHE_S          = 3600                                                  # cache Fear & Greed 1h
+FG_EXTREME_FEAR     = int(os.getenv("FG_EXTREME_FEAR_THRESHOLD", "20"))    # Kill switch si FG < 20
+FG_URL              = "https://api.alternative.me/fng/?limit=1"
 
 
 class DirectorAgent:
@@ -52,14 +56,19 @@ class DirectorAgent:
         self._daily_stop_at  : float = 0.0           # timestamp arret journalier
 
         # Snapshots horaires pour calcul de perte horaire (60 min)
-        # On garde (timestamp, value) toutes les minutes max
         self._hourly_window: deque[tuple[float, float]] = deque(maxlen=120)
+
+        # Fear & Greed Index
+        self._fg_value    : int | None = None
+        self._fg_label    : str        = "—"
+        self._fg_cached_at: float      = 0.0
 
         log.info("director_agent_ready",
                  max_dd=f"{MAX_DRAWDOWN_PCT:.0%}",
                  max_hour=f"{MAX_HOURLY_LOSS_PCT:.0%}",
                  max_day=f"{MAX_DAILY_LOSS_PCT:.0%}",
-                 check_s=CHECK_INTERVAL_S)
+                 check_s=CHECK_INTERVAL_S,
+                 fg_extreme_fear=FG_EXTREME_FEAR)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Boucle principale
@@ -76,6 +85,34 @@ class DirectorAgent:
             except Exception as exc:
                 log.error("director_check_error", error=str(exc))
             await asyncio.sleep(CHECK_INTERVAL_S)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Fear & Greed Index
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _fetch_fear_greed(self) -> int | None:
+        """Retourne le Fear & Greed Index (0-100). Cache 1h."""
+        now = time.time()
+        if self._fg_cached_at > 0 and now - self._fg_cached_at < FG_CACHE_S:
+            return self._fg_value
+
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(FG_URL, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                    if r.status != 200:
+                        return self._fg_value
+                    data = await r.json()
+
+            val   = int(data["data"][0]["value"])
+            label = data["data"][0]["value_classification"]
+            self._fg_value     = val
+            self._fg_label     = label
+            self._fg_cached_at = now
+            log.info("fear_greed_fetched", value=val, label=label)
+            return val
+        except Exception as exc:
+            log.warning("fear_greed_fetch_error", error=str(exc))
+            return self._fg_value   # retourne valeur en cache meme si expiree
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logique de check
@@ -108,6 +145,19 @@ class DirectorAgent:
         # ── Si arret journalier actif : ne rien faire ────────────────────────
         if self._daily_stop_at > 0 and (now - self._daily_stop_at) < 86400:
             return
+
+        # ── 0. Fear & Greed Index ────────────────────────────────────────────
+        fg = await self._fetch_fear_greed()
+        if fg is not None:
+            if fg < FG_EXTREME_FEAR:
+                await self._trigger_kill_switch(
+                    f"Extreme Fear (Fear & Greed = {fg}/100 — {self._fg_label})",
+                    now,
+                )
+                return
+            elif fg >= 80:
+                # Extreme Greed : notifier seulement (pas de kill switch automatique)
+                log.warning("fear_greed_extreme_greed", value=fg, label=self._fg_label)
 
         # ── 1. Drawdown global ───────────────────────────────────────────────
         if self._peak_value and self._peak_value > 0:
@@ -145,7 +195,8 @@ class DirectorAgent:
         log.debug("director_check_ok",
                   value=round(value, 2),
                   peak=round(self._peak_value, 2),
-                  hourly_loss=round(hourly_loss, 4))
+                  hourly_loss=round(hourly_loss, 4),
+                  fear_greed=self._fg_value)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Helpers

@@ -25,6 +25,7 @@ import os
 import structlog
 from dotenv import load_dotenv
 
+from agents.dynamic_bot  import DynamicBot
 from agents.memory_agent import MemoryAgent
 from agents.orchestrator import Orchestrator
 from interfaces.coinbase_client import CoinbaseClient
@@ -56,18 +57,25 @@ class BotSwarm:
         self._coinbase = CoinbaseClient()
         self._memory   = MemoryAgent()
 
-        # Instancier un Orchestrateur par bot
-        self.bots: list[Orchestrator] = []
+        # Instancier un Orchestrateur par bot (DynamicBot pour "dynamique")
+        self.bots: list[Orchestrator | DynamicBot] = []
         for cfg in config:
-            bot = Orchestrator(
-                symbol   = cfg["symbol"],
-                bot_id   = cfg["bot_id"],
-                weight   = cfg["weight"],
-                coinbase = self._coinbase,
-                memory   = self._memory,
-            )
-            # On stocke le nom pour le dashboard
-            bot.display_name = cfg.get("name", cfg["bot_id"].upper())
+            if cfg["bot_id"] == "dynamique":
+                bot = DynamicBot(
+                    coinbase = self._coinbase,
+                    memory   = self._memory,
+                    weight   = cfg["weight"],
+                )
+                bot.display_name = cfg.get("name", "Dynamique")
+            else:
+                bot = Orchestrator(
+                    symbol   = cfg["symbol"],
+                    bot_id   = cfg["bot_id"],
+                    weight   = cfg["weight"],
+                    coinbase = self._coinbase,
+                    memory   = self._memory,
+                )
+                bot.display_name = cfg.get("name", cfg["bot_id"].upper())
             self.bots.append(bot)
 
         log.info("bot_swarm_ready", n_bots=len(self.bots),
@@ -97,18 +105,22 @@ class BotSwarm:
             pos       = bot._coinbase.get_position(bot.symbol)
             warmed_up = bot._market.is_warmed_up
             paused    = trading_state.is_paused(bot.bot_id)
-            out.append({
-                "bot_id":       bot.bot_id,
-                "name":         getattr(bot, "display_name", bot.bot_id.upper()),
-                "symbol":       bot.symbol,
-                "weight":       bot.weight,
-                "paused":       paused,
-                "warmed_up":    warmed_up,
-                "history_len":  len(bot._market.price_history),
-                "position":     pos,
-                "last_trade":   bot._last_trade_ts,
+            entry = {
+                "bot_id":        bot.bot_id,
+                "name":          getattr(bot, "display_name", bot.bot_id.upper()),
+                "symbol":        bot.symbol,
+                "weight":        bot.weight,
+                "paused":        paused,
+                "warmed_up":     warmed_up,
+                "history_len":   len(bot._market.price_history),
+                "position":      pos,
+                "last_trade":    bot._last_trade_ts,
                 "signal_streak": bot._signal_streak,
-            })
+            }
+            # Infos supplementaires pour le bot dynamique
+            if bot.bot_id == "dynamique" and hasattr(bot, "get_last_perfs"):
+                entry["dynamic_perfs"] = bot.get_last_perfs()
+            out.append(entry)
         return out
 
     async def get_portfolio_total(self) -> float:

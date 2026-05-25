@@ -65,19 +65,23 @@ async def _fetch_btc_price() -> float:
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "🤖 *Trading Bot v2*\n\n"
-        "Commandes disponibles :\n"
+        "🤖 *Trading Bot v2 — Swarm*\n\n"
+        "*Swarm & Contrôle*\n"
+        "`/bots`          — état de tous les bots\n"
+        "`/kill [raison]` — kill switch global (pause tous)\n"
+        "`/release`       — relâcher le kill switch\n"
+        "`/pause btc|eth|sol|dyn|all` — pause individuelle\n"
+        "`/resume [bot|all]`          — reprendre\n\n"
+        "*Infos*\n"
         "`/register`  — activer les notifications\n"
-        "`/status`    — état complet (RSI, EMA, position, cooldown)\n"
+        "`/status`    — état complet (RSI, EMA, position)\n"
         "`/positions` — positions ouvertes avec P&L live\n"
-        "`/metrics`   — performances globales (WR, DD, etc.)\n"
+        "`/metrics`   — performances globales (WR, DD…)\n"
         "`/decisions` — dernières décisions\n"
-        "`/backtest`  — backtest 30j sur BTC-USD\n"
+        "`/backtest`  — backtest 30j BTC-USD\n"
         "`/price`     — prix actuel BTC-USDC\n"
         "`/pnl`       — P&L du portefeuille\n"
-        "`/mode`      — mode paper/live\n"
-        "`/stop`      — mettre en pause\n"
-        "`/resume`    — reprendre le trading",
+        "`/mode`      — mode paper/live",
         parse_mode="Markdown",
     )
 
@@ -297,30 +301,35 @@ async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Met le trading en pause."""
+    """Kill switch global : met TOUS les bots en pause."""
     try:
         from agents import trading_state
-        trading_state.pause()
+        reason = "Pause manuelle via /stop"
+        trading_state.kill_switch(reason)
         await update.message.reply_text(
-            "⏸ *Trading mis en pause.*\n"
-            "Aucun ordre ne sera passé. Tape `/resume` pour reprendre.",
+            "⏸ *Kill switch activé — tous les bots en pause.*\n"
+            "Tape `/resume` ou `/release` pour reprendre.",
             parse_mode="Markdown",
         )
-        log.info("trading_paused_by_user")
+        log.info("kill_switch_manual_stop", user=update.effective_user.username)
     except Exception as exc:
         await update.message.reply_text(f"❌ Erreur : `{exc}`", parse_mode="Markdown")
 
 
 async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Reprend le trading après une pause."""
+    """Relâche le kill switch / reprend tous les bots."""
     try:
         from agents import trading_state
-        trading_state.resume()
+        if context.args:
+            # /resume btc|eth|sol|dyn|all → pause individuelle
+            await _resume_bot(update, context)
+            return
+        trading_state.release_kill_switch()
         await update.message.reply_text(
-            "▶️ *Trading repris.*",
+            "▶️ *Kill switch levé — tous les bots reprennent.*",
             parse_mode="Markdown",
         )
-        log.info("trading_resumed_by_user")
+        log.info("kill_switch_released_by_user", user=update.effective_user.username)
     except Exception as exc:
         await update.message.reply_text(f"❌ Erreur : `{exc}`", parse_mode="Markdown")
 
@@ -537,6 +546,159 @@ async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Commandes Swarm
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _get_swarm():
+    import sys
+    return getattr(sys.modules.get("__main__"), "SWARM", None)
+
+
+async def cmd_bots(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Affiche l'état de tous les bots du swarm."""
+    swarm = _get_swarm()
+    if not swarm:
+        await update.message.reply_text(
+            "_Swarm non disponible — bot en mode standalone._",
+            parse_mode="Markdown",
+        )
+        return
+
+    from agents import trading_state
+    ks_active = trading_state.is_kill_switch_active()
+    lines = [f"*Swarm — {len(swarm.bots)} bots* {'🚨 KILL SWITCH' if ks_active else ''}"]
+
+    for b in swarm.get_status():
+        paused   = b["paused"]
+        warmed   = b["warmed_up"]
+        pos      = b.get("position") or {}
+        has_pos  = pos.get("qty", 0) > 0
+
+        if ks_active:       status = "🚨 KILL"
+        elif paused:        status = "⏸ pausé"
+        elif not warmed:    status = f"🔄 chauffe {b['history_len']}/51"
+        else:               status = "▶️ actif"
+
+        pos_txt = ""
+        if has_pos:
+            pos_txt = f"\n    📦 `{pos['qty']:.5f}` @ `{pos['avg_price']:,.2f}`"
+
+        # Performances dynamiques
+        dyn_txt = ""
+        if b.get("dynamic_perfs"):
+            parts = " | ".join(
+                f"{s.split('-')[0]} `{v:+.1f}%`"
+                for s, v in sorted(b["dynamic_perfs"].items(), key=lambda x: -x[1])
+            )
+            dyn_txt = f"\n    24h : {parts}"
+
+        lines.append(
+            f"\n*{b['name']}* `{b['symbol']}` ({b['weight']:.0%})\n"
+            f"   {status}{pos_txt}{dyn_txt}"
+        )
+
+    if ks_active:
+        reason = trading_state.get_kill_reason() or "—"
+        lines.append(f"\n🚨 Raison : _{reason}_")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_kill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Active le kill switch manuellement avec raison optionnelle."""
+    from agents import trading_state
+    reason = " ".join(context.args) if context.args else "Arrêt manuel via /kill"
+    trading_state.kill_switch(reason)
+    log.info("kill_switch_manual_kill",
+             user=update.effective_user.username, reason=reason)
+    await update.message.reply_text(
+        f"🚨 *Kill switch activé*\n"
+        f"Raison : _{reason}_\n"
+        f"Tous les bots sont en *PAUSE*.\n"
+        f"Tape `/release` pour reprendre.",
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_release(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Relâche le kill switch."""
+    from agents import trading_state
+    if not trading_state.is_kill_switch_active():
+        await update.message.reply_text(
+            "ℹ️ Kill switch déjà inactif.", parse_mode="Markdown"
+        )
+        return
+    trading_state.release_kill_switch()
+    log.info("kill_switch_manual_release", user=update.effective_user.username)
+    await update.message.reply_text(
+        "✅ *Kill switch levé.*\nTrading repris sur tous les bots.",
+        parse_mode="Markdown",
+    )
+
+
+_BOT_ALIASES = {
+    "btc": "btc", "eth": "eth", "sol": "sol",
+    "dyn": "dynamique", "dynamique": "dynamique", "all": "all",
+}
+
+
+async def cmd_pause_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/pause btc|eth|sol|dyn|all — pause individuelle ou globale."""
+    from agents import trading_state
+    swarm  = _get_swarm()
+    target = (context.args[0].lower() if context.args else "all")
+    bot_id = _BOT_ALIASES.get(target)
+
+    if bot_id is None:
+        await update.message.reply_text(
+            "Usage : `/pause btc|eth|sol|dyn|all`", parse_mode="Markdown"
+        )
+        return
+
+    if bot_id == "all":
+        if swarm:
+            for b in swarm.bots:
+                trading_state.pause(b.bot_id)
+        await update.message.reply_text(
+            "⏸ *Tous les bots mis en pause.*", parse_mode="Markdown"
+        )
+    else:
+        trading_state.pause(bot_id)
+        await update.message.reply_text(
+            f"⏸ Bot `{bot_id}` mis en *pause*.", parse_mode="Markdown"
+        )
+    log.info("bot_paused_by_user", target=target, user=update.effective_user.username)
+
+
+async def _resume_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Logique de resume d'un bot specifique (appelee par cmd_resume aussi)."""
+    from agents import trading_state
+    swarm  = _get_swarm()
+    target = (context.args[0].lower() if context.args else "all")
+    bot_id = _BOT_ALIASES.get(target)
+
+    if bot_id is None:
+        await update.message.reply_text(
+            "Usage : `/resume btc|eth|sol|dyn|all`", parse_mode="Markdown"
+        )
+        return
+
+    if bot_id == "all":
+        if swarm:
+            for b in swarm.bots:
+                trading_state.resume(b.bot_id)
+        await update.message.reply_text(
+            "▶️ *Tous les bots relancés.*", parse_mode="Markdown"
+        )
+    else:
+        trading_state.resume(bot_id)
+        await update.message.reply_text(
+            f"▶️ Bot `{bot_id}` *repris*.", parse_mode="Markdown"
+        )
+    log.info("bot_resumed_by_user", target=target, user=update.effective_user.username)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Construction de l'application
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -561,6 +723,11 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("mode",      cmd_mode))
     app.add_handler(CommandHandler("stop",      cmd_stop))
     app.add_handler(CommandHandler("resume",    cmd_resume))
+    # Swarm commands
+    app.add_handler(CommandHandler("bots",     cmd_bots))
+    app.add_handler(CommandHandler("kill",     cmd_kill))
+    app.add_handler(CommandHandler("release",  cmd_release))
+    app.add_handler(CommandHandler("pause",    cmd_pause_bot))
     return app
 
 

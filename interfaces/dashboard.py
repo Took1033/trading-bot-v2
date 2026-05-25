@@ -151,6 +151,17 @@ HTML = r"""<!DOCTYPE html>
   .pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
            background: #50e350; margin-right: 6px; animation: pulse 2s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  /* Sparkline charts */
+  canvas.sparkline { display: block; width: 100%; height: 44px;
+                     margin-top: 8px; border-top: 1px solid #1f2530; padding-top: 4px; }
+
+  /* Fear & Greed color overrides */
+  .fg-extreme-fear { color: #ff4444 !important; }
+  .fg-fear         { color: #ff8844 !important; }
+  .fg-neutral      { color: #f0f0f0 !important; }
+  .fg-greed        { color: #88ee44 !important; }
+  .fg-extreme-greed{ color: #44ff44 !important; }
 </style>
 </head>
 <body>
@@ -233,6 +244,11 @@ HTML = r"""<!DOCTYPE html>
       <div class="metric" id="n-decisions">—</div>
       <div class="submetric" id="last-decision">—</div>
     </div>
+    <div class="card">
+      <h2>Fear &amp; Greed</h2>
+      <div class="metric" id="fg-value">—</div>
+      <div class="submetric" id="fg-label">—</div>
+    </div>
   </div>
 
   <!-- Cartes bots détaillées -->
@@ -255,6 +271,75 @@ async function fetchJson(url) {
 
 function fmt(n, d=2) { return n != null ? n.toLocaleString('fr-FR', {minimumFractionDigits: d, maximumFractionDigits: d}) : '—'; }
 function fmtPct(n, d=2) { return n != null ? (n>=0?'+':'') + n.toFixed(d) + '%' : '—'; }
+
+// ─── Sparklines ───────────────────────────────────────────────────────────────
+function drawSparkline(canvas, prices) {
+  if (!prices || prices.length < 2) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.offsetWidth || canvas.width;
+  const h = canvas.height;
+  canvas.width = w;  // rescale to actual pixel width
+  ctx.clearRect(0, 0, w, h);
+
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const range = (max - min) || 1;
+  const up = prices[prices.length - 1] >= prices[0];
+
+  // gradient fill
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, up ? 'rgba(80,227,80,0.25)' : 'rgba(227,80,80,0.25)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+
+  ctx.beginPath();
+  prices.forEach((p, i) => {
+    const x = (i / (prices.length - 1)) * w;
+    const y = h - 2 - ((p - min) / range) * (h - 6);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  // close fill path
+  ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // stroke line
+  ctx.beginPath();
+  prices.forEach((p, i) => {
+    const x = (i / (prices.length - 1)) * w;
+    const y = h - 2 - ((p - min) / range) * (h - 6);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = up ? '#50e350' : '#e35050';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // last price dot
+  const lastX = w;
+  const lastY = h - 2 - ((prices[prices.length-1] - min) / range) * (h - 6);
+  ctx.beginPath();
+  ctx.arc(lastX - 1, lastY, 3, 0, Math.PI * 2);
+  ctx.fillStyle = up ? '#50e350' : '#e35050';
+  ctx.fill();
+}
+
+function applyCharts(history) {
+  if (!history) return;
+  document.querySelectorAll('canvas.sparkline').forEach(canvas => {
+    const botId = canvas.dataset.botid;
+    const prices = history[botId];
+    if (prices && prices.length > 1) drawSparkline(canvas, prices);
+  });
+}
+
+// ─── Fear & Greed helpers ─────────────────────────────────────────────────────
+function fgClass(v) {
+  if (v == null) return '';
+  if (v < 20) return 'fg-extreme-fear';
+  if (v < 40) return 'fg-fear';
+  if (v < 60) return 'fg-neutral';
+  if (v < 80) return 'fg-greed';
+  return 'fg-extreme-greed';
+}
 
 function setNode(botId, state, pnlPct, hasPos, symbol) {
   const rect = document.querySelector('#node-' + botId + ' rect');
@@ -294,6 +379,15 @@ async function refresh() {
   document.getElementById('director-status').textContent =
     killActive ? '🚨 KILL ACTIF' : '🟢 monitoring';
 
+  // FEAR & GREED
+  const fgEl  = document.getElementById('fg-value');
+  const fgLbl = document.getElementById('fg-label');
+  if (port?.fear_greed != null) {
+    fgEl.textContent = port.fear_greed;
+    fgEl.className   = 'metric ' + fgClass(port.fear_greed);
+    fgLbl.textContent = port.fear_greed_label || '—';
+  }
+
   // PORTFOLIO
   const p = await fetchJson('/api/portfolio');
   if (p) {
@@ -326,20 +420,36 @@ async function refresh() {
 
       // Card
       const cls = 'bot-card' + (hasPos ? ' has-position' : '') + (b.paused ? ' paused' : '');
+      // Infos dynamiques (Bot Dynamique)
+      let dynInfo = '';
+      if (b.bot_id === 'dynamique' && b.dynamic_perfs && Object.keys(b.dynamic_perfs).length) {
+        const perfs = Object.entries(b.dynamic_perfs)
+          .sort((a,b) => b[1]-a[1])
+          .map(([s,v]) => `${s.split('-')[0]} ${v>=0?'+':''}${v.toFixed(1)}%`)
+          .join(' | ');
+        dynInfo = `<div class="bot-stat"><span class="label">24h</span><span class="value" style="font-size:0.8em;color:#8b95a7;">${perfs}</span></div>`;
+      }
+
       grid.innerHTML += `<div class="${cls}">
         <h3>${b.name} <span style="color:#6b7585;font-size:0.75em;float:right;">${(b.weight*100).toFixed(0)}%</span></h3>
         <div class="symbol">${b.symbol}</div>
         <div class="bot-stat"><span class="label">Statut</span><span class="value">${state === 'kill' ? '🚨 KILL' : b.paused ? '⏸ pausé' : '▶️ actif'}</span></div>
-        <div class="bot-stat"><span class="label">Warm-up</span><span class="value">${b.warmed_up ? '✅' : (b.history_len + '/22')}</span></div>
+        <div class="bot-stat"><span class="label">Warm-up</span><span class="value">${b.warmed_up ? '✅ prêt' : ('🔄 ' + b.history_len + '/51')}</span></div>
         <div class="bot-stat"><span class="label">Position</span><span class="value">${hasPos ? fmt(b.position.qty, 6) : '—'}</span></div>
         ${hasPos ? `
         <div class="bot-stat"><span class="label">Entrée</span><span class="value">$${fmt(b.position.avg_price)}</span></div>
-        <div class="bot-stat"><span class="label">P&L</span><span class="value ${pnlPct>=0?'pos-up':'pos-down'}">${fmtPct(pnlPct)}</span></div>
+        <div class="bot-stat"><span class="label">P&L live</span><span class="value ${pnlPct!=null&&pnlPct>=0?'pos-up':'pos-down'}">${fmtPct(pnlPct)}</span></div>
         ` : ''}
+        ${dynInfo}
+        <canvas class="sparkline" data-botid="${b.bot_id}" width="260" height="44"></canvas>
       </div>`;
     });
   }
   document.getElementById('n-active').textContent = nActive;
+
+  // SPARKLINE CHARTS (apres build du grid pour que les canvas existent dans le DOM)
+  const history = await fetchJson('/api/history');
+  applyCharts(history);
 
   // DECISIONS
   const dec = await fetchJson('/api/decisions');
@@ -439,16 +549,38 @@ async def handle_portfolio(request: web.Request) -> web.Response:
 
 
 async def handle_director(request: web.Request) -> web.Response:
-    """Etat du Director Agent."""
+    """Etat du Director Agent + Fear & Greed."""
     from agents import trading_state
     director = _get_director()
+
+    fg_val   = director._fg_value if director else None
+    fg_label = director._fg_label if director else "—"
+
     return web.json_response({
-        "mode":                 MODE,
-        "kill_switch_active":   trading_state.is_kill_switch_active(),
-        "kill_reason":          trading_state.get_kill_reason(),
-        "peak_value":           director._peak_value  if director else None,
-        "initial_value":        director._initial_value if director else None,
+        "mode":               MODE,
+        "kill_switch_active": trading_state.is_kill_switch_active(),
+        "kill_reason":        trading_state.get_kill_reason(),
+        "peak_value":         director._peak_value   if director else None,
+        "initial_value":      director._initial_value if director else None,
+        "fear_greed":         fg_val,
+        "fear_greed_label":   fg_label,
     })
+
+
+async def handle_history(request: web.Request) -> web.Response:
+    """Retourne l'historique de prix en memoire pour chaque bot (sparklines)."""
+    swarm = _get_swarm()
+    if not swarm:
+        return web.json_response({})
+
+    out: dict[str, list[float]] = {}
+    for bot in swarm.bots:
+        try:
+            if bot._market and bot._market.price_history:
+                out[bot.bot_id] = list(bot._market.price_history)
+        except Exception:
+            pass
+    return web.json_response(out)
 
 
 async def handle_decisions(request: web.Request) -> web.Response:
@@ -471,6 +603,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/portfolio", handle_portfolio)
     app.router.add_get("/api/director",  handle_director)
     app.router.add_get("/api/decisions", handle_decisions)
+    app.router.add_get("/api/history",   handle_history)
     return app
 
 

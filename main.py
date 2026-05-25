@@ -84,12 +84,12 @@ async def main() -> None:
             for b in swarm.bots
         )
         await notify(
-            f"🤖 *Trading Bot v2 - Swarm démarré*\n"
+            f"🤖 *Trading Bot v2 — Swarm démarré*\n"
             f"Mode : `{MODE.upper()}`\n"
             f"Bots actifs :\n{bot_list}\n"
-            f"Director Agent : Kill Switch activé\n"
-            f"Logs : `logs/trading.log`\n\n"
-            f"Tape /bots pour voir l'état du swarm."
+            f"Director Agent : Kill Switch + Fear & Greed activés\n"
+            f"Dashboard : `http://localhost:{os.getenv('DASHBOARD_PORT', '8080')}`\n\n"
+            f"Commandes swarm : /bots /kill /release /pause /stop"
         )
 
         # Lancer swarm + director + daily summary + dashboard en parallele
