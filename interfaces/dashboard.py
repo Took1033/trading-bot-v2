@@ -1018,13 +1018,23 @@ def build_app() -> web.Application:
 
 
 async def run_dashboard() -> None:
+    import asyncio
     app    = build_app()
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
+    try:
+        await site.start()
+    except OSError as exc:
+        if exc.errno in (10048, 98):   # Windows: 10048 / Linux: 98 = port already in use
+            log.warning("dashboard_port_busy",
+                        port=PORT,
+                        hint=f"Port {PORT} deja utilise. "
+                             "Ferme l'ancienne instance ou change DASHBOARD_PORT dans .env")
+            await runner.cleanup()
+            return
+        raise
     log.info("dashboard_started", url=f"http://localhost:{PORT}")
-    import asyncio
     try:
         await asyncio.Event().wait()
     finally:
