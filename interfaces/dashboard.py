@@ -72,7 +72,7 @@ HTML = r"""<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<title>Trading Bot v2 - Swarm Dashboard</title>
+<title>Kairos Alpha — Swarm</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -162,15 +162,30 @@ HTML = r"""<!DOCTYPE html>
   .fg-neutral      { color: #f0f0f0 !important; }
   .fg-greed        { color: #88ee44 !important; }
   .fg-extreme-greed{ color: #44ff44 !important; }
+
+  /* Boutons de controle */
+  .btn { display: inline-block; padding: 5px 12px; border-radius: 5px; border: none;
+         cursor: pointer; font-size: 0.82em; font-weight: 600; text-decoration: none;
+         transition: opacity 0.15s; }
+  .btn:hover { opacity: 0.8; }
+  .btn-kill    { background: #7a1f1f; color: #ffaaaa; }
+  .btn-release { background: #1f4a1f; color: #aaffaa; }
+  .btn-pause   { background: #3b3a1f; color: #e3c050; }
+  .btn-resume  { background: #1f3b2f; color: #50e3a0; }
+  .btn-open    { background: #1f2a3a; color: #88b8ff; font-size: 0.75em; float: right; }
+  .bot-actions { display: flex; gap: 6px; margin-top: 10px; }
+  .bot-card { cursor: default; }
 </style>
 </head>
 <body>
 <div class="container">
   <header>
-    <h1>Trading Bot v2 <small>Swarm Dashboard</small></h1>
-    <div>
+    <h1>Kairos Alpha <small>Swarm Dashboard</small></h1>
+    <div style="display:flex;gap:10px;align-items:center;">
       <span class="badge" id="mode-badge">…</span>
       <span class="badge" id="kill-badge">…</span>
+      <button class="btn btn-kill"    id="btn-kill"    onclick="doKill()"   style="display:none">🚨 Kill Switch</button>
+      <button class="btn btn-release" id="btn-release" onclick="doRelease()" style="display:none">✅ Relâcher</button>
     </div>
   </header>
 
@@ -378,6 +393,7 @@ async function refresh() {
 
   document.getElementById('director-status').textContent =
     killActive ? '🚨 KILL ACTIF' : '🟢 monitoring';
+  updateKillButtons(killActive);
 
   // FEAR & GREED
   const fgEl  = document.getElementById('fg-value');
@@ -430,8 +446,15 @@ async function refresh() {
         dynInfo = `<div class="bot-stat"><span class="label">24h</span><span class="value" style="font-size:0.8em;color:#8b95a7;">${perfs}</span></div>`;
       }
 
+      const pauseBtn = b.paused
+        ? `<button class="btn btn-resume" onclick="doResume('${b.bot_id}')">▶️ Reprendre</button>`
+        : `<button class="btn btn-pause"  onclick="doPause('${b.bot_id}')">⏸ Pause</button>`;
+
       grid.innerHTML += `<div class="${cls}">
-        <h3>${b.name} <span style="color:#6b7585;font-size:0.75em;float:right;">${(b.weight*100).toFixed(0)}%</span></h3>
+        <h3>${b.name}
+          <span style="color:#6b7585;font-size:0.75em;">${(b.weight*100).toFixed(0)}%</span>
+          <a class="btn btn-open" href="/bot/${b.bot_id}" target="_blank">🔍 Ouvrir</a>
+        </h3>
         <div class="symbol">${b.symbol}</div>
         <div class="bot-stat"><span class="label">Statut</span><span class="value">${state === 'kill' ? '🚨 KILL' : b.paused ? '⏸ pausé' : '▶️ actif'}</span></div>
         <div class="bot-stat"><span class="label">Warm-up</span><span class="value">${b.warmed_up ? '✅ prêt' : ('🔄 ' + b.history_len + '/51')}</span></div>
@@ -442,6 +465,7 @@ async function refresh() {
         ` : ''}
         ${dynInfo}
         <canvas class="sparkline" data-botid="${b.bot_id}" width="260" height="44"></canvas>
+        <div class="bot-actions">${pauseBtn}</div>
       </div>`;
     });
   }
@@ -481,8 +505,293 @@ async function refresh() {
   }
 }
 
+// ─── Controles ────────────────────────────────────────────────────────────────
+async function doKill() {
+  if (!confirm('Activer le Kill Switch ? Tous les bots seront mis en pause.')) return;
+  await fetch('/api/kill', {method:'POST'});
+  refresh();
+}
+async function doRelease() {
+  await fetch('/api/release', {method:'POST'});
+  refresh();
+}
+async function doPause(botId) {
+  await fetch('/api/bot/' + botId + '/pause', {method:'POST'});
+  refresh();
+}
+async function doResume(botId) {
+  await fetch('/api/bot/' + botId + '/resume', {method:'POST'});
+  refresh();
+}
+
+// Afficher/masquer les boutons kill/release selon l'etat
+function updateKillButtons(killActive) {
+  document.getElementById('btn-kill').style.display    = killActive ? 'none'         : 'inline-block';
+  document.getElementById('btn-release').style.display = killActive ? 'inline-block' : 'none';
+}
+
 refresh();
 setInterval(refresh, 8000);
+</script>
+</body>
+</html>"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Page individuelle par bot (comme les ports 3000-3003 de Kairos Alpha)
+# ─────────────────────────────────────────────────────────────────────────────
+
+BOT_HTML = r"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Kairos Alpha — {BOT_NAME}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+         background: #0a0e14; color: #d4d4d4; padding: 20px; }
+  .container { max-width: 800px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 24px;
+           padding-bottom: 16px; border-bottom: 1px solid #1f2530; }
+  .back { color: #88b8ff; text-decoration: none; font-size: 0.9em; }
+  .back:hover { text-decoration: underline; }
+  h1 { font-size: 1.6em; color: #f0f0f0; flex: 1; }
+  h1 small { color: #6b7585; font-size: 0.55em; font-weight: 400; display: block; }
+  .price-big { font-size: 2.4em; font-weight: 800; color: #f0f0f0;
+               font-family: "Consolas", monospace; margin: 20px 0 4px; }
+  .price-change { font-size: 1em; margin-bottom: 24px; }
+  .up   { color: #50e350; }  .down { color: #e35050; }
+  .card { background: #131820; border: 1px solid #1f2530;
+          border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 0.75em; color: #8b95a7; text-transform: uppercase;
+             letter-spacing: 0.5px; margin-bottom: 14px; }
+  .stat { display: flex; justify-content: space-between; padding: 7px 0;
+          font-size: 0.9em; border-bottom: 1px solid #1a2030; }
+  .stat:last-child { border-bottom: 0; }
+  .stat .label { color: #8b95a7; }
+  .stat .value { font-family: "Consolas", monospace; color: #f0f0f0; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .btn { padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer;
+         font-size: 0.9em; font-weight: 700; transition: opacity 0.15s; }
+  .btn:hover { opacity: 0.8; }
+  .btn-pause   { background: #3b3a1f; color: #e3c050; }
+  .btn-resume  { background: #1f4a1f; color: #50e350; }
+  .btn-kill    { background: #7a1f1f; color: #ffaaaa; }
+  .btn-release { background: #1f4a1f; color: #aaffaa; }
+  canvas.chart { display: block; width: 100%; height: 120px; }
+  .status-badge { display: inline-block; padding: 4px 12px; border-radius: 4px;
+                  font-size: 0.85em; font-weight: 700; }
+  .status-active { background: #1f4a2a; color: #50e350; }
+  .status-paused { background: #4a2a1f; color: #e3a050; }
+  .status-kill   { background: #5a1f1f; color: #ff5050; }
+  .status-cold   { background: #1f2a3a; color: #8b95a7; }
+  footer { text-align: center; margin-top: 30px; font-size: 0.75em; color: #6b7585; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; font-size: 0.83em;
+           border-bottom: 1px solid #1f2530; }
+  th { color: #8b95a7; font-weight: 600; font-size: 0.75em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <a class="back" href="/">← Swarm</a>
+    <h1 id="bot-title">Bot {BOT_ID_UPPER}
+      <small id="bot-symbol">{BOT_SYMBOL}</small>
+    </h1>
+    <div id="status-badge" class="status-badge status-cold">…</div>
+  </header>
+
+  <div id="price-big" class="price-big">—</div>
+  <div id="price-change" class="price-change">—</div>
+
+  <div class="controls" id="controls">
+    <button class="btn btn-pause"   id="btn-pause"   onclick="doPause()">⏸ Mettre en pause</button>
+    <button class="btn btn-resume"  id="btn-resume"  onclick="doResume()" style="display:none">▶️ Reprendre</button>
+    <button class="btn btn-kill"    id="btn-kill"    onclick="doKillGlobal()">🚨 Kill Switch Global</button>
+    <button class="btn btn-release" id="btn-release" onclick="doReleaseGlobal()" style="display:none">✅ Relâcher Kill Switch</button>
+  </div>
+
+  <div class="card">
+    <h2>Graphique de prix (historique en mémoire)</h2>
+    <canvas class="chart" id="price-chart" height="120"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>Position ouverte</h2>
+    <div id="position-info">
+      <div class="stat"><span class="label">Position</span><span class="value" id="pos-qty">—</span></div>
+      <div class="stat"><span class="label">Prix entrée</span><span class="value" id="pos-entry">—</span></div>
+      <div class="stat"><span class="label">Prix actuel</span><span class="value" id="pos-current">—</span></div>
+      <div class="stat"><span class="label">P&L live</span><span class="value" id="pos-pnl">—</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Indicateurs</h2>
+    <div class="stat"><span class="label">Warm-up</span><span class="value" id="ind-warm">—</span></div>
+    <div class="stat"><span class="label">Historique prix</span><span class="value" id="ind-hist">—</span></div>
+    <div class="stat"><span class="label">Dernier trade</span><span class="value" id="ind-last">—</span></div>
+    <div class="stat"><span class="label">Signal streak</span><span class="value" id="ind-streak">—</span></div>
+    <div class="stat"><span class="label">Allocation poids</span><span class="value" id="ind-weight">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>10 dernières décisions de ce bot</h2>
+    <div id="decisions">…</div>
+  </div>
+
+  <footer>Auto-refresh 5s — Kairos Alpha</footer>
+</div>
+
+<script>
+const BOT_ID = '{BOT_ID}';
+
+function fmt(n, d=2) { return n != null ? n.toLocaleString('fr-FR', {minimumFractionDigits:d, maximumFractionDigits:d}) : '—'; }
+function fmtPct(n, d=2) { return n != null ? (n>=0?'+':'')+n.toFixed(d)+'%' : '—'; }
+
+async function fetchJson(url) {
+  try { const r = await fetch(url); return await r.json(); }
+  catch { return null; }
+}
+
+function drawChart(canvas, prices) {
+  if (!prices || prices.length < 2) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.offsetWidth || canvas.width;
+  const h = canvas.height;
+  canvas.width = w;
+  ctx.clearRect(0, 0, w, h);
+  const min = Math.min(...prices), max = Math.max(...prices);
+  const range = (max - min) || 1;
+  const up = prices[prices.length-1] >= prices[0];
+  const col = up ? '#50e350' : '#e35050';
+
+  const grad = ctx.createLinearGradient(0,0,0,h);
+  grad.addColorStop(0, up ? 'rgba(80,227,80,0.3)' : 'rgba(227,80,80,0.3)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+
+  ctx.beginPath();
+  prices.forEach((p,i) => {
+    const x=(i/(prices.length-1))*w, y=h-4-((p-min)/range)*(h-10);
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.lineTo(w,h); ctx.lineTo(0,h); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+
+  ctx.beginPath();
+  prices.forEach((p,i) => {
+    const x=(i/(prices.length-1))*w, y=h-4-((p-min)/range)*(h-10);
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke();
+
+  // last price label
+  const lastY = h-4-((prices[prices.length-1]-min)/range)*(h-10);
+  ctx.fillStyle = col; ctx.font = 'bold 12px Consolas';
+  ctx.fillText('$'+fmt(prices[prices.length-1],0), w-90, Math.max(16, lastY-6));
+}
+
+async function refresh() {
+  const bot  = await fetchJson('/api/bot/' + BOT_ID);
+  const dir  = await fetchJson('/api/director');
+  const hist = await fetchJson('/api/history');
+
+  if (!bot) return;
+
+  // Titre + symbole
+  document.getElementById('bot-title').firstChild.nodeValue = bot.name + ' ';
+  document.getElementById('bot-symbol').textContent = bot.symbol;
+
+  // Prix
+  if (bot.current_price) {
+    document.getElementById('price-big').textContent = '$' + fmt(bot.current_price);
+  }
+  if (bot.price_history && bot.price_history.length >= 2) {
+    const prices = bot.price_history;
+    const chg = (prices[prices.length-1] - prices[0]) / prices[0] * 100;
+    const el = document.getElementById('price-change');
+    el.textContent = (chg>=0?'+':'')+chg.toFixed(2)+'% depuis le debut de session';
+    el.className = 'price-change ' + (chg>=0?'up':'down');
+  }
+
+  // Status badge
+  const ks = dir?.kill_switch_active;
+  const badge = document.getElementById('status-badge');
+  if (ks) {
+    badge.textContent = '🚨 KILL SWITCH'; badge.className = 'status-badge status-kill';
+  } else if (bot.paused) {
+    badge.textContent = '⏸ EN PAUSE'; badge.className = 'status-badge status-paused';
+  } else if (!bot.warmed_up) {
+    badge.textContent = '🔄 CHAUFFE'; badge.className = 'status-badge status-cold';
+  } else {
+    badge.textContent = '▶️ ACTIF'; badge.className = 'status-badge status-active';
+  }
+
+  // Boutons controle
+  document.getElementById('btn-pause').style.display   = bot.paused ? 'none' : 'inline-block';
+  document.getElementById('btn-resume').style.display  = bot.paused ? 'inline-block' : 'none';
+  document.getElementById('btn-kill').style.display    = ks ? 'none' : 'inline-block';
+  document.getElementById('btn-release').style.display = ks ? 'inline-block' : 'none';
+
+  // Position
+  const pos = bot.position;
+  if (pos && pos.qty > 0) {
+    document.getElementById('pos-qty').textContent = fmt(pos.qty, 6) + ' ' + bot.symbol.split('-')[0];
+    document.getElementById('pos-entry').textContent = '$' + fmt(pos.avg_price);
+    document.getElementById('pos-current').textContent = bot.current_price ? '$' + fmt(bot.current_price) : '—';
+    if (bot.current_price) {
+      const pnlPct = (bot.current_price - pos.avg_price) / pos.avg_price * 100;
+      const el = document.getElementById('pos-pnl');
+      el.textContent = fmtPct(pnlPct) + ' ($' + fmt(pos.qty*(bot.current_price-pos.avg_price)) + ')';
+      el.style.color = pnlPct >= 0 ? '#50e350' : '#e35050';
+    }
+  } else {
+    document.getElementById('pos-qty').textContent = 'Aucune position';
+    document.getElementById('pos-entry').textContent = '—';
+    document.getElementById('pos-current').textContent = '—';
+    document.getElementById('pos-pnl').textContent = '—';
+  }
+
+  // Indicateurs
+  document.getElementById('ind-warm').textContent   = bot.warmed_up ? '✅ Prêt (51 prix chargés)' : ('🔄 ' + bot.history_len + '/51 prix');
+  document.getElementById('ind-hist').textContent   = (bot.price_history?.length || 0) + ' prix en mémoire';
+  document.getElementById('ind-last').textContent   = bot.last_trade > 0 ? new Date(bot.last_trade*1000).toLocaleTimeString() : 'Aucun';
+  const streak = bot.signal_streak;
+  document.getElementById('ind-streak').textContent = streak?.action ? (streak.action + ' x' + streak.count) : 'Aucun';
+  document.getElementById('ind-weight').textContent = (bot.weight * 100).toFixed(0) + '%';
+
+  // Chart
+  const canvas = document.getElementById('price-chart');
+  if (hist && hist[BOT_ID]) drawChart(canvas, hist[BOT_ID]);
+
+  // Decisions
+  const dec = bot.decisions || [];
+  if (dec.length === 0) {
+    document.getElementById('decisions').innerHTML =
+      '<div style="padding:12px;color:#6b7585;font-style:italic">Aucune décision pour ce bot</div>';
+  } else {
+    let html = '<table><thead><tr><th>Heure</th><th>Type</th><th>Action</th><th>Conf.</th><th>Raison</th></tr></thead><tbody>';
+    dec.forEach(d => {
+      const conf = d.confidence != null ? Math.round(d.confidence*100)+'%' : '—';
+      const cls  = d.action==='buy' ? 'style="color:#50e350"' : d.action==='sell' ? 'style="color:#e35050"' : '';
+      html += `<tr><td>${d.timestamp.substring(11,16)}</td><td>${d.task_type}</td>
+               <td ${cls}>${d.action||'—'}</td><td>${conf}</td>
+               <td style="color:#8b95a7">${(d.reasoning||'').substring(0,60)}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('decisions').innerHTML = html;
+  }
+}
+
+async function doPause()         { await fetch('/api/bot/'+BOT_ID+'/pause',   {method:'POST'}); refresh(); }
+async function doResume()        { await fetch('/api/bot/'+BOT_ID+'/resume',  {method:'POST'}); refresh(); }
+async function doKillGlobal()    { if(confirm('Kill Switch global ?')) { await fetch('/api/kill', {method:'POST'}); refresh(); } }
+async function doReleaseGlobal() { await fetch('/api/release', {method:'POST'}); refresh(); }
+
+refresh();
+setInterval(refresh, 5000);
 </script>
 </body>
 </html>"""
@@ -592,18 +901,119 @@ async def handle_decisions(request: web.Request) -> web.Response:
     return web.json_response([dict(r) for r in rows])
 
 
+async def handle_bot_page(request: web.Request) -> web.Response:
+    """Page individuelle d'un bot (comme les ports 3000-3003 de Kairos Alpha)."""
+    bot_id = request.match_info["bot_id"].lower()
+    swarm  = _get_swarm()
+
+    bot_name   = bot_id.upper()
+    bot_symbol = "—"
+    if swarm:
+        for b in swarm.bots:
+            if b.bot_id == bot_id:
+                bot_name   = getattr(b, "display_name", bot_id.upper())
+                bot_symbol = b.symbol
+                break
+
+    html = (BOT_HTML
+            .replace("{BOT_ID}",      bot_id)
+            .replace("{BOT_ID_UPPER}", bot_id.upper())
+            .replace("{BOT_NAME}",    bot_name)
+            .replace("{BOT_SYMBOL}",  bot_symbol))
+    return web.Response(text=html, content_type="text/html", charset="utf-8")
+
+
+async def handle_bot_api(request: web.Request) -> web.Response:
+    """Etat detaille d'un bot unique + historique + decisions recentes."""
+    bot_id = request.match_info["bot_id"].lower()
+    swarm  = _get_swarm()
+    if not swarm:
+        return web.json_response({"error": "swarm non disponible"}, status=503)
+
+    statuses = swarm.get_status()
+    bot      = next((s for s in statuses if s["bot_id"] == bot_id), None)
+    if not bot:
+        return web.json_response({"error": "bot inconnu"}, status=404)
+
+    # Prix live
+    bot["current_price"] = await _fetch_price(bot["symbol"])
+
+    # Historique en memoire
+    for b in swarm.bots:
+        if b.bot_id == bot_id:
+            bot["price_history"] = list(b._market.price_history)
+            break
+
+    # 10 dernieres decisions pour ce bot
+    try:
+        with _db() as conn:
+            rows = conn.execute(
+                "SELECT timestamp, task_type, action, confidence, reasoning "
+                "FROM decisions WHERE symbol=? ORDER BY timestamp DESC LIMIT 10",
+                (bot["symbol"],),
+            ).fetchall()
+        bot["decisions"] = [dict(r) for r in rows]
+    except Exception:
+        bot["decisions"] = []
+
+    return web.json_response(bot)
+
+
+async def handle_bot_pause(request: web.Request) -> web.Response:
+    """POST /api/bot/<id>/pause — met le bot en pause."""
+    from agents import trading_state
+    bot_id = request.match_info["bot_id"].lower()
+    trading_state.pause(bot_id)
+    log.info("bot_paused_via_dashboard", bot_id=bot_id)
+    return web.json_response({"ok": True, "bot_id": bot_id, "action": "paused"})
+
+
+async def handle_bot_resume(request: web.Request) -> web.Response:
+    """POST /api/bot/<id>/resume — reprend le bot."""
+    from agents import trading_state
+    bot_id = request.match_info["bot_id"].lower()
+    trading_state.resume(bot_id)
+    log.info("bot_resumed_via_dashboard", bot_id=bot_id)
+    return web.json_response({"ok": True, "bot_id": bot_id, "action": "resumed"})
+
+
+async def handle_kill(request: web.Request) -> web.Response:
+    """POST /api/kill — kill switch global via dashboard."""
+    from agents import trading_state
+    trading_state.kill_switch("Kill Switch manuel via Dashboard")
+    log.info("kill_switch_dashboard")
+    return web.json_response({"ok": True, "action": "kill"})
+
+
+async def handle_release(request: web.Request) -> web.Response:
+    """POST /api/release — relache le kill switch via dashboard."""
+    from agents import trading_state
+    trading_state.release_kill_switch()
+    log.info("kill_switch_released_dashboard")
+    return web.json_response({"ok": True, "action": "released"})
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Lancement
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_app() -> web.Application:
     app = web.Application()
-    app.router.add_get("/",              handle_index)
-    app.router.add_get("/api/swarm",     handle_swarm)
-    app.router.add_get("/api/portfolio", handle_portfolio)
-    app.router.add_get("/api/director",  handle_director)
-    app.router.add_get("/api/decisions", handle_decisions)
-    app.router.add_get("/api/history",   handle_history)
+    # Pages HTML
+    app.router.add_get("/",                        handle_index)
+    app.router.add_get("/bot/{bot_id}",            handle_bot_page)
+    # API lecture
+    app.router.add_get("/api/swarm",               handle_swarm)
+    app.router.add_get("/api/portfolio",           handle_portfolio)
+    app.router.add_get("/api/director",            handle_director)
+    app.router.add_get("/api/decisions",           handle_decisions)
+    app.router.add_get("/api/history",             handle_history)
+    app.router.add_get("/api/bot/{bot_id}",        handle_bot_api)
+    # API controles
+    app.router.add_post("/api/bot/{bot_id}/pause",  handle_bot_pause)
+    app.router.add_post("/api/bot/{bot_id}/resume", handle_bot_resume)
+    app.router.add_post("/api/kill",               handle_kill)
+    app.router.add_post("/api/release",            handle_release)
     return app
 
 

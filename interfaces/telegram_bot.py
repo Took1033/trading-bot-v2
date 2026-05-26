@@ -65,7 +65,7 @@ async def _fetch_btc_price() -> float:
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "🤖 *Trading Bot v2 — Swarm*\n\n"
+        "🤖 *Kairos Alpha — Swarm*\n\n"
         "*Swarm & Contrôle*\n"
         "`/bots`          — état de tous les bots\n"
         "`/kill [raison]` — kill switch global (pause tous)\n"
@@ -142,7 +142,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         paused_txt = "—"
 
     lines = [
-        f"*Trading Bot v2* — {now}",
+        f"*Kairos Alpha* — {now}",
         f"Mode : `{MODE.upper()}` | Statut : {paused_txt}",
         f"Décisions DB : `{decision_count}`",
     ]

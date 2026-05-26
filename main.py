@@ -1,5 +1,5 @@
 """
-main.py - Point d'entree unifie du Trading Bot v2.
+main.py - Point d'entree unifie du Kairos Alpha.
 
 Lance en parallele dans la meme boucle asyncio :
   - L'Orchestrateur     (boucle de trading : signal -> risque -> ordre -> DB)
@@ -84,7 +84,7 @@ async def main() -> None:
             for b in swarm.bots
         )
         await notify(
-            f"🤖 *Trading Bot v2 — Swarm démarré*\n"
+            f"🤖 *Kairos Alpha — Swarm démarré*\n"
             f"Mode : `{MODE.upper()}`\n"
             f"Bots actifs :\n{bot_list}\n"
             f"Director Agent : Kill Switch + Fear & Greed activés\n"
