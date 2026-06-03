@@ -69,6 +69,14 @@ SELL_MIN_NET_PROFIT_PCT = float(os.getenv("SELL_MIN_NET_PROFIT_PCT", "0.003"))  
 # donc on n'entre pas (evite les trades condamnes a churner a perte).
 ENTRY_MIN_NET_MARGIN_PCT = float(os.getenv("ENTRY_MIN_NET_MARGIN_PCT", "0.003"))  # +0.3% net vise
 
+# Gate de tendance (regime filter) — cause racine du saignement identifiee le
+# 2026-06-03 : le bot achetait des rebonds en TENDANCE BAISSIERE (price < EMA50)
+# -> stops quasi immediats. On n'ouvre un long QUE si price > EMA50*(1+buffer).
+# Acheter un repli reste permis tant qu'on est au-dessus de l'EMA50 (pullback
+# haussier sain). Desactivable / ajustable via .env.
+ENTRY_REQUIRE_UPTREND  = os.getenv("ENTRY_REQUIRE_UPTREND", "true").lower() in ("true", "1", "yes")
+ENTRY_TREND_BUFFER_PCT = float(os.getenv("ENTRY_TREND_BUFFER_PCT", "0.0"))   # marge mini au-dessus de l'EMA50
+
 # Protection : ferme une position ouverte depuis > X heures (zombie protection)
 POSITION_MAX_AGE_H   = float(os.getenv("POSITION_MAX_AGE_H", "24"))
 
@@ -438,6 +446,23 @@ class Orchestrator:
                          min_move_pct=round(min_move * 100, 3))
                 self._signal_streak = {"action": None, "count": 0}
                 return
+
+        # ── 5c. Gate de tendance : pas d'achat a contre-tendance ──────────────
+        # On bloque le BUY si price <= EMA50*(1+buffer) (tendance baissiere).
+        # Le pullback en uptrend (price toujours > EMA50) reste autorise.
+        # ema_trend = None tant qu'on n'a pas >=51 prix : on laisse passer.
+        if signal["action"] == "buy" and ENTRY_REQUIRE_UPTREND:
+            ema_trend = signal.get("metadata", {}).get("ema_trend")
+            if ema_trend:
+                threshold = float(ema_trend) * (1 + ENTRY_TREND_BUFFER_PCT)
+                if price <= threshold:
+                    log.info("entry_blocked_downtrend",
+                             symbol=self.symbol,
+                             price=round(price, 4),
+                             ema_trend=round(float(ema_trend), 4),
+                             buffer_pct=round(ENTRY_TREND_BUFFER_PCT * 100, 2))
+                    self._signal_streak = {"action": None, "count": 0}
+                    return
 
         # ── 6. Confirmation sur N ticks consecutifs ───────────────────────────
         if signal["action"] == self._signal_streak["action"]:
