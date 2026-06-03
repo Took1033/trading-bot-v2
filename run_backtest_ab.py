@@ -117,7 +117,8 @@ async def main() -> int:
     symbols = [sys.argv[1]] if len(sys.argv) > 1 else DEFAULT_SYMBOLS
     days = int(sys.argv[2]) if len(sys.argv) > 2 else 90
     gran_name = sys.argv[3] if len(sys.argv) > 3 else "hourly"
-    granularity = {"hourly": 3600, "6h": 21600, "daily": 86400, "15min": 900}.get(gran_name, 3600)
+    granularity = {"minute": 60, "5min": 300, "15min": 900,
+                   "hourly": 3600, "6h": 21600, "daily": 86400}.get(gran_name, 3600)
 
     print("=" * 78)
     print(f"  A/B GATE DE TENDANCE — {days}j {gran_name} — frais round-trip {ROUND_TRIP_FEE_PCT:.2%}")
