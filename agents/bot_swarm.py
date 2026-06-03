@@ -34,6 +34,9 @@ from bot_config import load_bots_config, save_bots_config, symbol_exists, valida
 load_dotenv()
 log = structlog.get_logger()
 
+# Délai entre le démarrage de chaque bot au boot (anti-burst 429 Coinbase).
+STARTUP_STAGGER_S = float(os.getenv("SWARM_STARTUP_STAGGER_S", "3.0"))
+
 
 class BotSwarm:
     """Gere un essaim de bots de trading en parallele."""
@@ -107,10 +110,13 @@ class BotSwarm:
 
     async def run_all(self) -> None:
         """Lance chaque bot dans sa propre tâche asyncio, puis supervise."""
-        log.info("bot_swarm_starting", n_bots=len(self.bots))
+        log.info("bot_swarm_starting", n_bots=len(self.bots),
+                 stagger_s=STARTUP_STAGGER_S)
         self._running = True
-        for bot in self.bots:
-            self._spawn(bot)
+        # Démarrage échelonné : évite le pic de 429 Coinbase quand les N bots
+        # warm-up (fetch candles) tous en même temps au boot.
+        for i, bot in enumerate(self.bots):
+            self._spawn(bot, delay=i * STARTUP_STAGGER_S)
         # Superviseur : maintient run_all() en vie pour permettre add/remove à chaud
         try:
             while self._running:
@@ -120,13 +126,19 @@ class BotSwarm:
                 task.cancel()
             raise
 
-    def _spawn(self, bot) -> None:
-        """Crée (ou recrée) la tâche run_forever d'un bot."""
+    def _spawn(self, bot, delay: float = 0.0) -> None:
+        """Crée (ou recrée) la tâche run_forever d'un bot, avec délai initial optionnel."""
         old = self._tasks.get(bot.bot_id)
         if old and not old.done():
             old.cancel()
+
+        async def _delayed_run():
+            if delay > 0:
+                await asyncio.sleep(delay)
+            await bot.run_forever()
+
         self._tasks[bot.bot_id] = asyncio.create_task(
-            bot.run_forever(), name=f"bot-{bot.bot_id}"
+            _delayed_run(), name=f"bot-{bot.bot_id}"
         )
 
     # ─────────────────────────────────────────────────────────────────────────
