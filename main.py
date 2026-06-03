@@ -28,6 +28,10 @@ load_dotenv()
 from logging_config import configure_logging
 configure_logging()
 
+# Validation .env avant toute initialisation (fail fast)
+from config_validator import report_and_exit_on_error
+report_and_exit_on_error()
+
 import structlog
 
 log               = structlog.get_logger()
@@ -39,12 +43,24 @@ DASHBOARD_PORT    = int(os.getenv("DASHBOARD_PORT", "8080"))
 
 def _build_tasks(swarm, director) -> list:
     """Construit la liste des coroutines a lancer en parallele."""
-    from agents.daily_summary import daily_summary_loop
+    from agents.daily_summary     import daily_summary_loop
+    from agents.weekly_stats      import weekly_stats_loop
+    from agents.milestone_tracker import milestone_loop
+    from agents.trade_journal     import journal_loop
+    from agents.db_backup         import backup_loop
+    from agents.news_sentiment    import news_sentiment_loop
+    from agents.param_tuner       import param_tuner_loop
 
     tasks = [
         swarm.run_all(),
         director.run_forever(),
         daily_summary_loop(),
+        weekly_stats_loop(),
+        milestone_loop(swarm),
+        journal_loop(),
+        backup_loop(),
+        news_sentiment_loop(),
+        param_tuner_loop(),
     ]
     if DASHBOARD_ENABLED:
         from interfaces.dashboard import run_dashboard
@@ -76,18 +92,44 @@ async def main() -> None:
 
     # ── Mode complet avec Telegram ───────────────────────────────────────────
     from telegram import Update
+    from telegram.error import NetworkError, TimedOut
     from interfaces.telegram_bot import build_app
 
     tg_app = build_app()
     log.info("bot_starting", mode=MODE, n_bots=len(swarm.bots),
              bots=[b.symbol for b in swarm.bots])
 
-    async with tg_app:
+    # L'init / le polling Telegram font des appels reseau (getMe). Si Telegram
+    # est injoignable (reseau/ISP), on ne bloque PAS le trading en LIVE : on
+    # bascule en headless (trading + dashboard continuent, sans notifs Telegram).
+    try:
+        await tg_app.initialize()
+    except (NetworkError, TimedOut) as exc:
+        log.error("telegram_unreachable_fallback_headless", error=str(exc))
+        print(
+            "\n"
+            "  ⚠️  TELEGRAM INJOIGNABLE — bascule en mode headless.\n"
+            "  Le trading et le dashboard tournent ; pas de notifs Telegram.\n"
+        )
+        await asyncio.gather(*_build_tasks(swarm, director))
+        return
+
+    try:
         await tg_app.start()
 
         # Demarrer le polling — detecte conflit si autre instance en cours
         try:
             await tg_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        except (NetworkError, TimedOut) as exc:
+            await tg_app.stop()
+            log.error("telegram_unreachable_fallback_headless", error=str(exc))
+            print(
+                "\n"
+                "  ⚠️  TELEGRAM INJOIGNABLE — bascule en mode headless.\n"
+                "  Le trading et le dashboard tournent ; pas de notifs Telegram.\n"
+            )
+            await asyncio.gather(*_build_tasks(swarm, director))
+            return
         except Exception as exc:
             err = str(exc)
             if "conflict" in err.lower() or "Conflict" in type(exc).__name__:
@@ -129,8 +171,12 @@ async def main() -> None:
         finally:
             log.info("bot_shutting_down")
             await notify("🛑 *Kairos Alpha arrêté.*")
-            await tg_app.updater.stop()
+            if tg_app.updater:
+                await tg_app.updater.stop()
             await tg_app.stop()
+    finally:
+        # Remplace le __aexit__ du context manager (on a initialize() manuellement).
+        await tg_app.shutdown()
 
 
 if __name__ == "__main__":

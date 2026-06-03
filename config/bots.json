@@ -1,0 +1,82 @@
+{
+  "bots": [
+    {
+      "bot_id": "btc",
+      "symbol": "BTC-USDC",
+      "weight": 0.35,
+      "name": "Bitcoin"
+    },
+    {
+      "bot_id": "eth",
+      "symbol": "ETH-USDC",
+      "weight": 0.3,
+      "name": "Ethereum"
+    },
+    {
+      "bot_id": "sol",
+      "symbol": "SOL-USDC",
+      "weight": 0.2,
+      "name": "Solana"
+    },
+    {
+      "bot_id": "dynamique",
+      "symbol": "ETH-USDC",
+      "weight": 0.15,
+      "name": "Dynamique"
+    },
+    {
+      "bot_id": "ada",
+      "symbol": "ADA-USDC",
+      "weight": 0.15,
+      "name": "ADA"
+    },
+    {
+      "bot_id": "xrp",
+      "symbol": "XRP-USDC",
+      "weight": 0.1,
+      "name": "XRP"
+    },
+    {
+      "bot_id": "zec",
+      "symbol": "ZEC-USDC",
+      "weight": 0.1,
+      "name": "ZEC"
+    },
+    {
+      "bot_id": "xlm",
+      "symbol": "XLM-USDC",
+      "weight": 0.1,
+      "name": "XLM"
+    },
+    {
+      "bot_id": "doge",
+      "symbol": "DOGE-USDC",
+      "weight": 0.1,
+      "name": "Dogecoin"
+    },
+    {
+      "bot_id": "avax",
+      "symbol": "AVAX-USDC",
+      "weight": 0.1,
+      "name": "Avalanche"
+    },
+    {
+      "bot_id": "sui",
+      "symbol": "AVAX-USDC",
+      "weight": 0.1,
+      "name": "Sui"
+    },
+    {
+      "bot_id": "near",
+      "symbol": "NEAR-USDC",
+      "weight": 0.1,
+      "name": "NEAR"
+    },
+    {
+      "bot_id": "aave",
+      "symbol": "AAVE-USDC",
+      "weight": 0.1,
+      "name": "AAVE"
+    }
+  ]
+}

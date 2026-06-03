@@ -108,6 +108,9 @@ class DirectorAgent:
             self._fg_value     = val
             self._fg_label     = label
             self._fg_cached_at = now
+            # Publie pour le RiskAgent
+            from agents import trading_state
+            trading_state.set_fear_greed(val, label)
             log.info("fear_greed_fetched", value=val, label=label)
             return val
         except Exception as exc:

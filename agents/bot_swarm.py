@@ -29,69 +29,182 @@ from agents.dynamic_bot  import DynamicBot
 from agents.memory_agent import MemoryAgent
 from agents.orchestrator import Orchestrator
 from interfaces.coinbase_client import CoinbaseClient
+from bot_config import load_bots_config, save_bots_config, symbol_exists, validate_symbol_format
 
 load_dotenv()
 log = structlog.get_logger()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Configuration des bots du swarm
-# ─────────────────────────────────────────────────────────────────────────────
-
-DEFAULT_BOTS = [
-    {"bot_id": "btc",       "symbol": "BTC-USDC", "weight": 0.35, "name": "Bitcoin"},
-    {"bot_id": "eth",       "symbol": "ETH-USDC", "weight": 0.30, "name": "Ethereum"},
-    {"bot_id": "sol",       "symbol": "SOL-USDC", "weight": 0.20, "name": "Solana"},
-    # Bot Dynamique : pour l'instant trade aussi BTC, sera switch dynamique
-    {"bot_id": "dynamique", "symbol": "BTC-USDC", "weight": 0.15, "name": "Dynamique"},
-]
 
 
 class BotSwarm:
     """Gere un essaim de bots de trading en parallele."""
 
     def __init__(self, bots_config: list[dict] | None = None) -> None:
-        config = bots_config or DEFAULT_BOTS
+        # P0 : config chargée depuis config/bots.json (fallback defaults)
+        config = bots_config if bots_config is not None else load_bots_config()
 
         # Ressources partagees entre tous les bots
         self._coinbase = CoinbaseClient()
         self._memory   = MemoryAgent()
 
+        # Tâches asyncio par bot (pour add/remove à chaud — P2)
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._running = False
+
         # Instancier un Orchestrateur par bot (DynamicBot pour "dynamique")
         self.bots: list[Orchestrator | DynamicBot] = []
         for cfg in config:
-            if cfg["bot_id"] == "dynamique":
-                bot = DynamicBot(
-                    coinbase = self._coinbase,
-                    memory   = self._memory,
-                    weight   = cfg["weight"],
-                )
-                bot.display_name = cfg.get("name", "Dynamique")
-            else:
-                bot = Orchestrator(
-                    symbol   = cfg["symbol"],
-                    bot_id   = cfg["bot_id"],
-                    weight   = cfg["weight"],
-                    coinbase = self._coinbase,
-                    memory   = self._memory,
-                )
-                bot.display_name = cfg.get("name", cfg["bot_id"].upper())
-            self.bots.append(bot)
+            self.bots.append(self._make_bot(cfg))
 
         log.info("bot_swarm_ready", n_bots=len(self.bots),
                  bots=[{"id": b.bot_id, "symbol": b.symbol, "weight": b.weight} for b in self.bots])
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Lancement en parallele
+    # Fabrique de bots
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _make_bot(self, cfg: dict):
+        """Instancie un bot (Orchestrator ou DynamicBot) depuis une config dict."""
+        if cfg["bot_id"] == "dynamique":
+            bot = DynamicBot(
+                coinbase = self._coinbase,
+                memory   = self._memory,
+                weight   = cfg.get("weight", 0.15),
+            )
+            bot.display_name = cfg.get("name", "Dynamique")
+        else:
+            bot = Orchestrator(
+                symbol   = cfg["symbol"],
+                bot_id   = cfg["bot_id"],
+                weight   = cfg.get("weight", 1.0),
+                coinbase = self._coinbase,
+                memory   = self._memory,
+            )
+            bot.display_name = cfg.get("name", cfg["bot_id"].upper())
+        return bot
+
+    def _find_bot(self, bot_id: str):
+        return next((b for b in self.bots if b.bot_id == bot_id.lower()), None)
+
+    def _current_config(self) -> list[dict]:
+        """Reconstruit la config courante (pour persistance)."""
+        return [
+            {
+                "bot_id": b.bot_id,
+                "symbol": b.symbol,
+                "weight": b.weight,
+                "name":   getattr(b, "display_name", b.bot_id.upper()),
+            }
+            for b in self.bots
+        ]
+
+    def _persist(self) -> None:
+        """P3 : sauvegarde la config courante sur disque."""
+        save_bots_config(self._current_config())
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Lancement en parallele (superviseur de tâches — P2)
     # ─────────────────────────────────────────────────────────────────────────
 
     async def run_all(self) -> None:
-        """Lance tous les bots en parallele dans la meme boucle asyncio."""
+        """Lance chaque bot dans sa propre tâche asyncio, puis supervise."""
         log.info("bot_swarm_starting", n_bots=len(self.bots))
-        await asyncio.gather(
-            *[bot.run_forever() for bot in self.bots],
-            return_exceptions=True,
+        self._running = True
+        for bot in self.bots:
+            self._spawn(bot)
+        # Superviseur : maintient run_all() en vie pour permettre add/remove à chaud
+        try:
+            while self._running:
+                await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            for task in self._tasks.values():
+                task.cancel()
+            raise
+
+    def _spawn(self, bot) -> None:
+        """Crée (ou recrée) la tâche run_forever d'un bot."""
+        old = self._tasks.get(bot.bot_id)
+        if old and not old.done():
+            old.cancel()
+        self._tasks[bot.bot_id] = asyncio.create_task(
+            bot.run_forever(), name=f"bot-{bot.bot_id}"
         )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # P1 : changement de paire à chaud
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def set_pair(self, bot_id: str, new_symbol: str) -> dict:
+        """Change la paire d'un bot. Refuse si position ouverte ou symbole invalide."""
+        new_symbol = new_symbol.upper()
+        bot = self._find_bot(bot_id)
+        if not bot:
+            return {"ok": False, "error": f"bot inconnu : {bot_id}"}
+        if bot.bot_id == "dynamique":
+            return {"ok": False, "error": "le bot Dynamique choisit sa paire automatiquement"}
+        if not validate_symbol_format(new_symbol):
+            return {"ok": False, "error": f"format de paire invalide : {new_symbol}"}
+        if not await symbol_exists(new_symbol):
+            return {"ok": False, "error": f"paire introuvable sur Coinbase : {new_symbol}"}
+
+        old_symbol = bot.symbol
+        if old_symbol == new_symbol:
+            return {"ok": False, "error": f"le bot trade déjà {new_symbol}"}
+
+        pos = self._coinbase.get_position(old_symbol)
+        if pos and pos.get("qty", 0) > 0:
+            return {"ok": False, "error": f"position ouverte sur {old_symbol} — ferme-la avant de changer de paire"}
+
+        await bot.switch_symbol(new_symbol)
+        self._persist()
+        log.info("bot_pair_changed", bot_id=bot.bot_id, old=old_symbol, new=new_symbol)
+        return {"ok": True, "bot_id": bot.bot_id, "old": old_symbol, "new": new_symbol}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # P2 : ajout / suppression de bots à la volée
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def add_bot(self, bot_id: str, symbol: str,
+                      weight: float = 0.1, name: str | None = None) -> dict:
+        """Ajoute un bot sur une paire arbitraire et démarre sa tâche."""
+        bot_id = bot_id.lower().strip()
+        symbol = symbol.upper()
+        if not bot_id.isalnum():
+            return {"ok": False, "error": "bot_id doit être alphanumérique (ex: ada)"}
+        if self._find_bot(bot_id):
+            return {"ok": False, "error": f"bot_id déjà utilisé : {bot_id}"}
+        if not validate_symbol_format(symbol):
+            return {"ok": False, "error": f"format de paire invalide : {symbol}"}
+        if not await symbol_exists(symbol):
+            return {"ok": False, "error": f"paire introuvable sur Coinbase : {symbol}"}
+
+        cfg = {"bot_id": bot_id, "symbol": symbol,
+               "weight": weight, "name": name or bot_id.upper()}
+        bot = self._make_bot(cfg)
+        self.bots.append(bot)
+        if self._running:
+            self._spawn(bot)
+        self._persist()
+        log.info("bot_added", bot_id=bot_id, symbol=symbol, weight=weight)
+        return {"ok": True, "bot_id": bot_id, "symbol": symbol, "weight": weight}
+
+    async def remove_bot(self, bot_id: str) -> dict:
+        """Retire un bot du swarm. Refuse si position ouverte."""
+        bot_id = bot_id.lower().strip()
+        bot = self._find_bot(bot_id)
+        if not bot:
+            return {"ok": False, "error": f"bot inconnu : {bot_id}"}
+
+        pos = self._coinbase.get_position(bot.symbol)
+        if pos and pos.get("qty", 0) > 0:
+            return {"ok": False, "error": f"position ouverte sur {bot.symbol} — ferme-la avant de retirer le bot"}
+
+        task = self._tasks.pop(bot_id, None)
+        if task and not task.done():
+            task.cancel()
+        self.bots = [b for b in self.bots if b.bot_id != bot_id]
+        self._persist()
+        log.info("bot_removed", bot_id=bot_id)
+        return {"ok": True, "bot_id": bot_id}
 
     # ─────────────────────────────────────────────────────────────────────────
     # Accesseurs pour Director / dashboard

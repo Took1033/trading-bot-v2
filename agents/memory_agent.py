@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 import structlog
 from dotenv import load_dotenv
@@ -20,6 +21,7 @@ load_dotenv()
 log = structlog.get_logger()
 
 DB_PATH = os.getenv("DB_PATH", "memory/trading.db")
+FIRST_LIVE_MARKER = Path(DB_PATH).parent / ".first_live_trade.txt"
 
 
 class MemoryAgent:
@@ -140,6 +142,33 @@ class MemoryAgent:
             (symbol,),
         ).fetchone()
         return row["action"] if row else None
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Marqueur "premier trade live" (fichier, hors DB)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def get_first_live_trade_ts(self) -> str | None:
+        """Retourne le timestamp ISO du premier trade live, ou None si jamais."""
+        if FIRST_LIVE_MARKER.exists():
+            try:
+                return FIRST_LIVE_MARKER.read_text(encoding="utf-8").strip()
+            except Exception:
+                return None
+        return None
+
+    def mark_first_live_trade(self) -> None:
+        """Enregistre le timestamp du premier trade live (idempotent)."""
+        if FIRST_LIVE_MARKER.exists():
+            return
+        try:
+            FIRST_LIVE_MARKER.parent.mkdir(parents=True, exist_ok=True)
+            FIRST_LIVE_MARKER.write_text(
+                datetime.now(timezone.utc).isoformat(),
+                encoding="utf-8",
+            )
+            log.info("first_live_trade_marked", file=str(FIRST_LIVE_MARKER))
+        except Exception as exc:
+            log.warning("first_live_trade_mark_failed", error=str(exc))
 
     def get_last_snapshot(self) -> dict | None:
         """Retourne le dernier snapshot de portefeuille."""

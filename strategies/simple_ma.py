@@ -16,11 +16,15 @@ Requires au moins 22 prix (EMA21 + 1).
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
 import structlog
+from dotenv import load_dotenv
+
+load_dotenv()
 
 log = structlog.get_logger()
 
@@ -47,7 +51,10 @@ EMA_TREND       = 50     # Filtre tendance long-terme
 RSI_PERIOD      = 14
 RSI_OVERBOUGHT  = 70.0   # BUY bloque au-dessus
 RSI_OVERSOLD    = 30.0   # SELL bloque en-dessous
-VOL_MIN_PCT     = 0.10   # Volatilite min : std/price >= 0.10% (sinon marche plat)
+# Volatilite min : std/price >= X% (sinon marche plat = whipsaws)
+# Defaut 0.05% : permissif assez pour tradenr dans des marches calmes.
+# Mettre 0.10% pour etre tres conservateur (peu de trades).
+VOL_MIN_PCT     = float(os.getenv("STRATEGY_VOL_MIN_PCT", "0.05"))
 MIN_POINTS      = EMA_SLOW + 1   # 22 points minimum pour signal de base
 MIN_POINTS_FULL = EMA_TREND + 1  # 51 points pour avoir le trend filter actif
 

@@ -21,7 +21,7 @@ import os
 import re
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import structlog
@@ -35,11 +35,34 @@ DB_PATH = os.getenv("DB_PATH", "memory/trading.db")
 PORT    = int(os.getenv("DASHBOARD_PORT", "8080"))
 MODE    = os.getenv("COINBASE_MODE", "paper")
 
+# Capital live initial (.env). Sert de base au P&L en live au lieu des snapshots paper.
+LIVE_INITIAL_USDC = float(os.getenv("LIVE_INITIAL_USDC", "0") or "0")
+# Seuil de separation paper/live : les snapshots paper tournent autour de 10000,
+# les snapshots live autour de LIVE_INITIAL_USDC (~170). Tout snapshot sous ce
+# seuil est considere comme "live" -> debut de la courbe live.
+PAPER_LIVE_SPLIT = float(os.getenv("PAPER_LIVE_SPLIT_USDC", "1000"))
+
+# Frais round-trip Coinbase (taker x2). Soustrait du P&L par bot pour afficher
+# le net reel si la position etait liquidee maintenant.
+ROUND_TRIP_FEE_PCT = 2 * float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.006"))
+
 
 def _db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _live_start_ts(conn: sqlite3.Connection) -> str | None:
+    """Timestamp du 1er snapshot live (1er passage sous PAPER_LIVE_SPLIT). None en paper."""
+    if MODE != "live":
+        return None
+    row = conn.execute(
+        "SELECT timestamp FROM portfolio_snapshots "
+        "WHERE total_usdc < ? ORDER BY timestamp ASC LIMIT 1",
+        (PAPER_LIVE_SPLIT,),
+    ).fetchone()
+    return row["timestamp"] if row else None
 
 
 def _get_swarm():
@@ -74,6 +97,7 @@ HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <title>Kairos Alpha — Swarm</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
@@ -156,6 +180,67 @@ HTML = r"""<!DOCTYPE html>
   canvas.sparkline { display: block; width: 100%; height: 44px;
                      margin-top: 8px; border-top: 1px solid #1f2530; padding-top: 4px; }
 
+  /* Signal Diagnostic */
+  .signal-diag { display: grid; gap: 14px; grid-template-columns: 1fr 1fr;
+                 margin-bottom: 18px; }
+  .signal-diag .card { padding: 14px 16px; }
+  .vote-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .vote-label { width: 120px; font-size: 0.82em; color: #8b95a7; flex-shrink: 0; }
+  .vote-bar-bg { flex: 1; background: #1a2030; border-radius: 3px; height: 10px; overflow: hidden; }
+  .vote-bar { height: 10px; border-radius: 3px; transition: width 0.6s ease; min-width: 2px; }
+  .vote-bar.buy  { background: linear-gradient(90deg, #1f5a2a, #50e350); }
+  .vote-bar.sell { background: linear-gradient(90deg, #5a1f1f, #e35050); }
+  .vote-bar.threshold { background: #f0a030; }
+  .vote-score { font-family: "Consolas", monospace; font-size: 0.82em;
+                color: #f0f0f0; width: 36px; text-align: right; flex-shrink: 0; }
+  .voters-list { font-size: 0.78em; color: #50e350; margin-top: 4px; min-height: 16px; }
+  .voters-list.sell { color: #e35050; }
+  .diag-threshold { font-size: 0.78em; color: #f0a030; margin-top: 8px;
+                    padding-top: 8px; border-top: 1px solid #1f2530; }
+  .ind-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 6px; }
+  .ind-chip { background: #0d121a; border: 1px solid #1f2530; border-radius: 5px;
+              padding: 5px 8px; font-size: 0.78em; }
+  .ind-chip .lbl { color: #6b7585; display: block; font-size: 0.85em; }
+  .ind-chip .val { color: #f0f0f0; font-family: "Consolas", monospace; font-weight: 600; }
+  .ind-chip.warn  { border-color: #4a3a1f; }
+  .ind-chip.signal-buy  { border-color: #1f4a2a; }
+  .ind-chip.signal-sell { border-color: #4a1f1f; }
+  .no-trade-badge { display: inline-flex; align-items: center; gap: 6px;
+                    background: #2a2a1a; border: 1px solid #4a3a1f; border-radius: 6px;
+                    padding: 6px 12px; font-size: 0.82em; color: #e3c050; margin-bottom: 10px; }
+
+  /* Roadmap */
+  .roadmap { margin-bottom: 18px; }
+  .roadmap-grid { display: grid; gap: 12px;
+                  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                  margin-top: 12px; }
+  .phase-card { background: #0d121a; border: 1px solid #1f2530; border-radius: 8px;
+                padding: 14px 16px; }
+  .phase-card.current { border-color: #3a5a2a; background: #0d1a10; }
+  .phase-card.done    { border-color: #1f3a2a; opacity: 0.75; }
+  .phase-card.future  { opacity: 0.5; }
+  .phase-title { font-size: 0.88em; font-weight: 700; color: #e8e8e8; margin-bottom: 8px;
+                 display: flex; align-items: center; gap: 8px; }
+  .phase-tag { font-size: 0.7em; padding: 2px 8px; border-radius: 3px; font-weight: 600; }
+  .phase-tag.current { background: #1f4a2a; color: #50e350; }
+  .phase-tag.done    { background: #1f3a2a; color: #50a350; }
+  .phase-tag.future  { background: #1a2033; color: #6b7585; }
+  .phase-item { font-size: 0.8em; padding: 3px 0; display: flex; align-items: flex-start;
+                gap: 6px; color: #8b95a7; }
+  .phase-item.done { color: #70c070; }
+  .phase-item.todo { color: #a0a0b0; }
+  .phase-item .chk { flex-shrink: 0; margin-top: 1px; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid #1f2530; margin-bottom: 14px; }
+  .tab { padding: 7px 16px; font-size: 0.82em; font-weight: 600; color: #6b7585;
+         cursor: pointer; border-bottom: 2px solid transparent; transition: color 0.2s;
+         user-select: none; }
+  .tab:hover { color: #d4d4d4; }
+  .tab.active { color: #88b8ff; border-bottom-color: #88b8ff; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
   /* Fear & Greed color overrides */
   .fg-extreme-fear { color: #ff4444 !important; }
   .fg-fear         { color: #ff8844 !important; }
@@ -172,9 +257,31 @@ HTML = r"""<!DOCTYPE html>
   .btn-release { background: #1f4a1f; color: #aaffaa; }
   .btn-pause   { background: #3b3a1f; color: #e3c050; }
   .btn-resume  { background: #1f3b2f; color: #50e3a0; }
+  .btn-small   { background: #1a2333; color: #8b9eb3; padding: 3px 10px;
+                 border-radius: 4px; border: 1px solid #2a3142;
+                 cursor: pointer; font-size: 11px; font-weight: 500;
+                 margin-left: 4px; }
+  .btn-small:hover { background: #2a3142; color: #d4d4d4; }
   .btn-open    { background: #1f2a3a; color: #88b8ff; font-size: 0.75em; float: right; }
   .bot-actions { display: flex; gap: 6px; margin-top: 10px; }
   .bot-card { cursor: default; }
+
+  /* Contrôles paire / roster */
+  .btn-danger { color: #e88080; border-color: #4a2a2a; }
+  .btn-danger:hover { background: #3a2020; }
+  .pair-ctrl { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap;
+               padding-top: 8px; border-top: 1px solid #1f2530; align-items: center; }
+  .pair-ctrl input { background: #0d121a; border: 1px solid #2a3142; color: #d4d4d4;
+                     border-radius: 4px; padding: 4px 8px; font-size: 11px; width: 110px;
+                     font-family: "Consolas", monospace; }
+  .pair-ctrl input:focus { outline: none; border-color: #88b8ff; }
+  .add-bot-card { margin-bottom: 18px; }
+  .add-bot-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .add-bot-form input { background: #0d121a; border: 1px solid #2a3142; color: #d4d4d4;
+                        border-radius: 5px; padding: 7px 10px; font-size: 0.85em;
+                        font-family: "Consolas", monospace; }
+  .add-bot-form input:focus { outline: none; border-color: #88b8ff; }
+  .add-bot-form #new-bot-weight { width: 80px; }
 </style>
 </head>
 <body>
@@ -199,41 +306,8 @@ HTML = r"""<!DOCTYPE html>
         <text class="node-sub" x="500" y="62" id="director-status">…</text>
       </g>
 
-      <!-- Edges Director -> Bots -->
-      <path id="edge-btc"       class="edge" d="M 500,80 Q 500,170 150,200"/>
-      <path id="edge-eth"       class="edge" d="M 500,80 Q 500,170 383,200"/>
-      <path id="edge-sol"       class="edge" d="M 500,80 Q 500,170 617,200"/>
-      <path id="edge-dynamique" class="edge" d="M 500,80 Q 500,170 850,200"/>
-
-      <!-- 4 bots en bas -->
-      <g id="node-btc">
-        <rect class="node-bg" x="80" y="200" width="140" height="100" rx="10"/>
-        <text class="node-label" x="150" y="226">BTC</text>
-        <text class="node-sub"   x="150" y="248" id="bot-btc-symbol">BTC-USDC</text>
-        <text class="node-sub"   x="150" y="266" id="bot-btc-state">…</text>
-        <text class="node-sub"   x="150" y="284" id="bot-btc-pnl">P&amp;L: —</text>
-      </g>
-      <g id="node-eth">
-        <rect class="node-bg" x="313" y="200" width="140" height="100" rx="10"/>
-        <text class="node-label" x="383" y="226">ETH</text>
-        <text class="node-sub"   x="383" y="248" id="bot-eth-symbol">ETH-USDC</text>
-        <text class="node-sub"   x="383" y="266" id="bot-eth-state">…</text>
-        <text class="node-sub"   x="383" y="284" id="bot-eth-pnl">P&amp;L: —</text>
-      </g>
-      <g id="node-sol">
-        <rect class="node-bg" x="547" y="200" width="140" height="100" rx="10"/>
-        <text class="node-label" x="617" y="226">SOL</text>
-        <text class="node-sub"   x="617" y="248" id="bot-sol-symbol">SOL-USDC</text>
-        <text class="node-sub"   x="617" y="266" id="bot-sol-state">…</text>
-        <text class="node-sub"   x="617" y="284" id="bot-sol-pnl">P&amp;L: —</text>
-      </g>
-      <g id="node-dynamique">
-        <rect class="node-bg" x="780" y="200" width="140" height="100" rx="10"/>
-        <text class="node-label" x="850" y="226">Dynamique</text>
-        <text class="node-sub"   x="850" y="248" id="bot-dynamique-symbol">—</text>
-        <text class="node-sub"   x="850" y="266" id="bot-dynamique-state">…</text>
-        <text class="node-sub"   x="850" y="284" id="bot-dynamique-pnl">P&amp;L: —</text>
-      </g>
+      <!-- Bots + edges générés dynamiquement depuis /api/swarm (renderMindmap) -->
+      <g id="mindmap-bots"></g>
     </svg>
   </div>
 
@@ -252,7 +326,7 @@ HTML = r"""<!DOCTYPE html>
     <div class="card">
       <h2>Bots actifs</h2>
       <div class="metric" id="n-active">—</div>
-      <div class="submetric">sur 4 bots du swarm</div>
+      <div class="submetric">sur <span id="n-total">—</span> bots du swarm</div>
     </div>
     <div class="card">
       <h2>Décisions DB</h2>
@@ -266,13 +340,146 @@ HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Signal Diagnostic -->
+  <div class="signal-diag">
+    <div class="card">
+      <h2 style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span style="display:flex;align-items:center;gap:8px;">Diagnostic signal
+          <select id="diag-bot" onchange="loadSignalDebug()"
+                  style="background:#0d121a;border:1px solid #2a3142;color:#d4d4d4;border-radius:6px;padding:2px 6px;font-size:12px;"></select>
+        </span>
+        <span id="no-trade-since" style="font-size:11px;font-weight:400;color:#e3c050;"></span>
+      </h2>
+      <div id="vote-buy-row" class="vote-row">
+        <span class="vote-label">BUY score</span>
+        <div class="vote-bar-bg"><div class="vote-bar buy" id="vote-buy-bar" style="width:0%"></div></div>
+        <span class="vote-score" id="vote-buy-score">0.00</span>
+      </div>
+      <div class="voters-list" id="vote-buy-voters">aucun votant</div>
+      <div id="vote-sell-row" class="vote-row" style="margin-top:10px;">
+        <span class="vote-label">SELL score</span>
+        <div class="vote-bar-bg"><div class="vote-bar sell" id="vote-sell-bar" style="width:0%"></div></div>
+        <span class="vote-score" id="vote-sell-score">0.00</span>
+      </div>
+      <div class="voters-list sell" id="vote-sell-voters">aucun votant</div>
+      <div class="diag-threshold">
+        Seuil de déclenchement : <strong id="vote-threshold">1.20</strong>
+        &nbsp;|&nbsp; <span id="vote-status">En attente de signal fort</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Indicateurs temps réel (dernier signal)</h2>
+      <div class="ind-grid" id="ind-grid">
+        <div class="ind-chip"><span class="lbl">RSI</span><span class="val" id="ind-rsi">—</span></div>
+        <div class="ind-chip"><span class="lbl">MACD hist</span><span class="val" id="ind-macd">—</span></div>
+        <div class="ind-chip"><span class="lbl">EMA fast</span><span class="val" id="ind-ema-fast">—</span></div>
+        <div class="ind-chip"><span class="lbl">EMA slow</span><span class="val" id="ind-ema-slow">—</span></div>
+        <div class="ind-chip"><span class="lbl">BB lower</span><span class="val" id="ind-bb-low">—</span></div>
+        <div class="ind-chip"><span class="lbl">BB upper</span><span class="val" id="ind-bb-high">—</span></div>
+        <div class="ind-chip"><span class="lbl">Vol ratio</span><span class="val" id="ind-vol">—</span></div>
+        <div class="ind-chip"><span class="lbl">ATR %</span><span class="val" id="ind-atr">—</span></div>
+        <div class="ind-chip"><span class="lbl">Prix</span><span class="val" id="ind-price">—</span></div>
+      </div>
+      <div style="font-size:0.75em;color:#6b7585;margin-top:8px;" id="ind-symbol-ts">—</div>
+    </div>
+  </div>
+
+  <!-- Courbe P&L portfolio -->
+  <div class="card" style="margin-bottom:14px;">
+    <h2 style="display:flex;justify-content:space-between;align-items:center;">
+      <span>Courbe P&amp;L portfolio</span>
+      <span style="font-size:11px;font-weight:400;color:#6b7585;">
+        <button onclick="loadPnlCurve(7)" class="btn-small">7j</button>
+        <button onclick="loadPnlCurve(30)" class="btn-small">30j</button>
+        <button onclick="loadPnlCurve(90)" class="btn-small">90j</button>
+      </span>
+    </h2>
+    <div style="position:relative; height:280px; padding-top:8px;">
+      <canvas id="pnl-chart"></canvas>
+    </div>
+    <div style="font-size:12px;color:#8b9eb3;margin-top:6px;text-align:center;" id="pnl-stats">—</div>
+  </div>
+
   <!-- Cartes bots détaillées -->
   <div class="bot-grid" id="bot-grid">…</div>
 
-  <!-- Décisions récentes -->
+  <!-- Ajouter un bot -->
+  <div class="card add-bot-card">
+    <h2>Ajouter un bot</h2>
+    <div class="add-bot-form">
+      <input type="text" id="new-bot-id"     placeholder="id (ex: ada)" />
+      <input type="text" id="new-bot-symbol" placeholder="paire (ex: ADA-USDC)" />
+      <input type="number" id="new-bot-weight" placeholder="poids" step="0.05" min="0" max="1" value="0.10" />
+      <button class="btn btn-resume" onclick="doAddBot()">➕ Ajouter</button>
+    </div>
+    <div id="add-bot-msg" style="font-size:0.8em;color:#8b95a7;margin-top:8px;"></div>
+  </div>
+
+  <!-- Onglets : Décisions / Trades / Roadmap -->
   <div class="card">
-    <h2>20 dernières décisions (tous bots)</h2>
-    <div id="decisions-container">…</div>
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('tab-decisions', this)">20 dernières décisions</div>
+      <div class="tab" onclick="switchTab('tab-trades', this)">Trades exécutés</div>
+      <div class="tab" onclick="switchTab('tab-roadmap', this)">Roadmap projet</div>
+    </div>
+
+    <div id="tab-decisions" class="tab-panel active">
+      <div id="decisions-container">…</div>
+    </div>
+
+    <div id="tab-trades" class="tab-panel">
+      <div id="trades-container">…</div>
+    </div>
+
+    <div id="tab-roadmap" class="tab-panel">
+      <div class="roadmap-grid">
+        <div class="phase-card done">
+          <div class="phase-title">Phase 1 — Scaffolding <span class="phase-tag done">✓ Fait</span></div>
+          <div class="phase-item done"><span class="chk">✅</span> Architecture multi-bots Swarm</div>
+          <div class="phase-item done"><span class="chk">✅</span> Director Agent + kill switch</div>
+          <div class="phase-item done"><span class="chk">✅</span> 3 stratégies : MA, Multi-ind., Mean Rev.</div>
+          <div class="phase-item done"><span class="chk">✅</span> Ensemble vote pondéré</div>
+          <div class="phase-item done"><span class="chk">✅</span> Mémoire SQLite + UUID déterministes</div>
+          <div class="phase-item done"><span class="chk">✅</span> Dashboard Swarm (ce dashboard)</div>
+          <div class="phase-item done"><span class="chk">✅</span> Fear &amp; Greed + sparklines</div>
+          <div class="phase-item done"><span class="chk">✅</span> Bot Dynamique (rotation symbol)</div>
+          <div class="phase-item done"><span class="chk">✅</span> Telegram commandes Swarm</div>
+        </div>
+
+        <div class="phase-card done">
+          <div class="phase-title">Phase 2 — Signaux &amp; agents <span class="phase-tag done">✓ Fait</span></div>
+          <div class="phase-item done"><span class="chk">✅</span> Notification Telegram signal</div>
+          <div class="phase-item done"><span class="chk">✅</span> Risk Agent (position size, SL/TP)</div>
+          <div class="phase-item done"><span class="chk">✅</span> Journal de trades complet (CSV)</div>
+          <div class="phase-item done"><span class="chk">✅</span> Param tuner automatique</div>
+          <div class="phase-item done"><span class="chk">✅</span> News sentiment agent</div>
+          <div class="phase-item done"><span class="chk">✅</span> Weekly stats report</div>
+          <div class="phase-item done"><span class="chk">✅</span> Daily summary + milestones + backups</div>
+        </div>
+
+        <div class="phase-card current">
+          <div class="phase-title">Phase 3 — Calibrage &amp; trades <span class="phase-tag current">▶ En cours</span></div>
+          <div class="phase-item done"><span class="chk">✅</span> Moteur de backtest (run_backtest.py)</div>
+          <div class="phase-item todo"><span class="chk">⬜</span> Backtest intégré au dashboard</div>
+          <div class="phase-item todo"><span class="chk">⬜</span> Calibrage seuils ensemble sur données réelles</div>
+          <div class="phase-item todo"><span class="chk">⬜</span> Optimisation paramètres (grid search)</div>
+          <div class="phase-item todo"><span class="chk">⬜</span> Walk-forward validation</div>
+          <div class="phase-item todo"><span class="chk">⬜</span> Rapport P&amp;L / Sharpe / Max DD</div>
+        </div>
+
+        <div class="phase-card current">
+          <div class="phase-title">Phase 4 — Live &amp; Sécurité <span class="phase-tag current">🔴 LIVE actif</span></div>
+          <div class="phase-item done"><span class="chk">✅</span> Passage live Coinbase (capital réel)</div>
+          <div class="phase-item done"><span class="chk">✅</span> Kill switch par bot + global</div>
+          <div class="phase-item todo"><span class="chk">⬜</span> Audit sécurité complet</div>
+          <div class="phase-item todo"><span class="chk">⬜</span> Rate limiting &amp; circuit breakers</div>
+          <div class="phase-item todo"><span class="chk">⬜</span> Alertes Telegram avancées (P&amp;L, drawdown)</div>
+          <div class="phase-item todo"><span class="chk">⬜</span> Monitoring externe (uptime, alertes)</div>
+          <div class="phase-item todo"><span class="chk">⬜</span> Infra cloud déployable</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <footer><span class="pulse"></span>Auto-refresh 8s — http://localhost:<span id="port">8080</span></footer>
@@ -356,30 +563,80 @@ function fgClass(v) {
   return 'fg-extreme-greed';
 }
 
-function setNode(botId, state, pnlPct, hasPos, symbol) {
-  const rect = document.querySelector('#node-' + botId + ' rect');
-  const edge = document.getElementById('edge-' + botId);
-  if (!rect) return;
+// Frais round-trip Coinbase (maj depuis /api/director). Soustrait du P&L par bot.
+let FEE_RT = 0.012;
+function netPnl(cur, avg) {
+  if (cur == null || avg == null || avg <= 0) return null;
+  return ((cur - avg) / avg - FEE_RT) * 100;
+}
 
-  rect.classList.remove('node-active', 'node-paused', 'node-cold', 'node-kill');
-  edge.classList.remove('active', 'kill');
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
 
-  if (state === 'kill')    { rect.classList.add('node-kill'); edge.classList.add('kill'); }
-  else if (state === 'paused') rect.classList.add('node-paused');
-  else if (hasPos)         { rect.classList.add('node-active'); edge.classList.add('active'); }
-  else                     rect.classList.add('node-cold');
+// Génère dynamiquement les nœuds + arêtes de la carte mentale depuis le swarm.
+// Reflète en temps réel l'ajout / la suppression de bots.
+function renderMindmap(swarm, killActive) {
+  const g = document.getElementById('mindmap-bots');
+  if (!g) return;
+  g.innerHTML = '';
 
-  document.getElementById('bot-' + botId + '-state').textContent =
-    state === 'kill' ? '🚨 KILL' : state === 'paused' ? '⏸ pausé' : hasPos ? '📈 position' : '⚪ flat';
-  document.getElementById('bot-' + botId + '-pnl').textContent =
-    pnlPct != null ? 'P&L: ' + fmtPct(pnlPct) : 'P&L: —';
-  if (symbol) document.getElementById('bot-' + botId + '-symbol').textContent = symbol;
+  const n = swarm.length;
+  if (!n) return;
+  const W = 1000, nodeW = Math.min(140, (W - 40) / n - 10);
+  const slot = W / n;
+
+  swarm.forEach((b, i) => {
+    const cx = slot * (i + 0.5);
+    const x  = cx - nodeW / 2;
+    const hasPos = b.position && b.position.qty > 0;
+    const pnlPct = hasPos && b.current_price ?
+      netPnl(b.current_price, b.position.avg_price) : null;
+    const state = killActive ? 'kill' : (b.paused ? 'paused' : 'active');
+
+    // Arête Director -> bot
+    const edge = svgEl('path', {d: `M 500,80 Q 500,170 ${cx.toFixed(0)},200`, class: 'edge'});
+    if (state === 'kill') edge.classList.add('kill');
+    else if (state === 'active' && hasPos) edge.classList.add('active');
+    g.appendChild(edge);
+
+    // Boîte du bot
+    const rect = svgEl('rect', {x: x.toFixed(0), y: 200, width: nodeW.toFixed(0),
+                                height: 100, rx: 10, class: 'node-bg'});
+    if (state === 'kill')        rect.classList.add('node-kill');
+    else if (state === 'paused') rect.classList.add('node-paused');
+    else if (hasPos)             rect.classList.add('node-active');
+    else                         rect.classList.add('node-cold');
+    g.appendChild(rect);
+
+    const label = (b.name || b.bot_id).toUpperCase().substring(0, 12);
+    const stateTxt = state === 'kill' ? '🚨 KILL' : state === 'paused' ? '⏸ pausé'
+                   : hasPos ? '📈 position' : '⚪ flat';
+    const pnlTxt = pnlPct != null ? 'P&L: ' + fmtPct(pnlPct) : 'P&L: —';
+
+    g.appendChild(Object.assign(svgEl('text', {x: cx.toFixed(0), y: 226, class: 'node-label'}),
+                                {textContent: label}));
+    g.appendChild(Object.assign(svgEl('text', {x: cx.toFixed(0), y: 248, class: 'node-sub'}),
+                                {textContent: b.symbol || '—'}));
+    g.appendChild(Object.assign(svgEl('text', {x: cx.toFixed(0), y: 266, class: 'node-sub'}),
+                                {textContent: stateTxt}));
+    g.appendChild(Object.assign(svgEl('text', {x: cx.toFixed(0), y: 284, class: 'node-sub'}),
+                                {textContent: pnlTxt}));
+  });
 }
 
 async function refresh() {
   const port = await fetch('/api/director').then(r => r.json()).catch(() => null);
-  document.getElementById('mode-badge').textContent = (port?.mode || 'paper').toUpperCase();
-  document.getElementById('mode-badge').className = 'badge ' + (port?.mode || 'paper');
+  if (port?.round_trip_fee_pct != null) FEE_RT = port.round_trip_fee_pct;
+  // Pas de fallback 'paper' : afficher faussement PAPER en live est dangereux.
+  // Si le mode est inconnu (API injoignable), on garde le dernier badge connu.
+  if (port?.mode) {
+    document.getElementById('mode-badge').textContent = port.mode.toUpperCase();
+    document.getElementById('mode-badge').className = 'badge ' + port.mode;
+  }
 
   const killActive = port?.kill_switch_active;
   const killBadge = document.getElementById('kill-badge');
@@ -424,15 +681,14 @@ async function refresh() {
   let nActive = 0;
   if (swarm) {
     grid.innerHTML = '';
+    renderMindmap(swarm, killActive);
+    populateDiagSelect(swarm);
     swarm.forEach(b => {
       const hasPos = b.position && b.position.qty > 0;
       const pnlPct = hasPos && b.current_price ?
-        ((b.current_price - b.position.avg_price) / b.position.avg_price) * 100 : null;
+        netPnl(b.current_price, b.position.avg_price) : null;
       const state = killActive ? 'kill' : (b.paused ? 'paused' : 'active');
       if (!b.paused && !killActive) nActive++;
-
-      // Update mind map node
-      setNode(b.bot_id, state, pnlPct, hasPos, b.symbol);
 
       // Card
       const cls = 'bot-card' + (hasPos ? ' has-position' : '') + (b.paused ? ' paused' : '');
@@ -450,6 +706,15 @@ async function refresh() {
         ? `<button class="btn btn-resume" onclick="doResume('${b.bot_id}')">▶️ Reprendre</button>`
         : `<button class="btn btn-pause"  onclick="doPause('${b.bot_id}')">⏸ Pause</button>`;
 
+      // Contrôles paire/roster (sauf bot dynamique qui choisit auto)
+      const isDyn = b.bot_id === 'dynamique';
+      const pairCtrl = isDyn ? '' : `
+        <div class="pair-ctrl">
+          <input type="text" id="pair-${b.bot_id}" placeholder="${b.symbol}" />
+          <button class="btn-small" onclick="doSetPair('${b.bot_id}')">↔ Changer paire</button>
+          <button class="btn-small btn-danger" onclick="doRemoveBot('${b.bot_id}')">🗑 Retirer</button>
+        </div>`;
+
       grid.innerHTML += `<div class="${cls}">
         <h3>${b.name}
           <span style="color:#6b7585;font-size:0.75em;">${(b.weight*100).toFixed(0)}%</span>
@@ -461,15 +726,19 @@ async function refresh() {
         <div class="bot-stat"><span class="label">Position</span><span class="value">${hasPos ? fmt(b.position.qty, 6) : '—'}</span></div>
         ${hasPos ? `
         <div class="bot-stat"><span class="label">Entrée</span><span class="value">$${fmt(b.position.avg_price)}</span></div>
+        <div class="bot-stat"><span class="label">Engagé</span><span class="value">$${fmt(b.position.qty * b.position.avg_price)}</span></div>
+        <div class="bot-stat"><span class="label">Valeur actuelle</span><span class="value">${b.current_price ? '$' + fmt(b.position.qty * b.current_price) : '—'}</span></div>
         <div class="bot-stat"><span class="label">P&L live</span><span class="value ${pnlPct!=null&&pnlPct>=0?'pos-up':'pos-down'}">${fmtPct(pnlPct)}</span></div>
         ` : ''}
         ${dynInfo}
         <canvas class="sparkline" data-botid="${b.bot_id}" width="260" height="44"></canvas>
         <div class="bot-actions">${pauseBtn}</div>
+        ${pairCtrl}
       </div>`;
     });
   }
   document.getElementById('n-active').textContent = nActive;
+  if (swarm) document.getElementById('n-total').textContent = swarm.length;
 
   // SPARKLINE CHARTS (apres build du grid pour que les canvas existent dans le DOM)
   const history = await fetchJson('/api/history');
@@ -524,14 +793,265 @@ async function doResume(botId) {
   refresh();
 }
 
+// ─── Config paires / roster ───────────────────────────────────────────────────
+async function postJson(url, body) {
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body || {}),
+    });
+    return await r.json();
+  } catch (e) { return {ok: false, error: 'réseau'}; }
+}
+
+async function doSetPair(botId) {
+  const input = document.getElementById('pair-' + botId);
+  const symbol = (input.value || '').trim().toUpperCase();
+  if (!symbol) { input.focus(); return; }
+  const res = await postJson('/api/bot/' + botId + '/setpair', {symbol});
+  if (res.ok) { input.value = ''; refresh(); }
+  else alert('Changement de paire refusé : ' + (res.error || 'erreur'));
+}
+
+async function doRemoveBot(botId) {
+  if (!confirm('Retirer le bot ' + botId.toUpperCase() + ' du swarm ?')) return;
+  const res = await postJson('/api/bot/' + botId + '/remove', {});
+  if (res.ok) refresh();
+  else alert('Suppression refusée : ' + (res.error || 'erreur'));
+}
+
+async function doAddBot() {
+  const bot_id = (document.getElementById('new-bot-id').value || '').trim();
+  const symbol = (document.getElementById('new-bot-symbol').value || '').trim().toUpperCase();
+  const weight = parseFloat(document.getElementById('new-bot-weight').value || '0.1');
+  const msg = document.getElementById('add-bot-msg');
+  if (!bot_id || !symbol) { msg.textContent = 'id et paire requis'; return; }
+  msg.textContent = 'Ajout en cours…';
+  const res = await postJson('/api/bots/add', {bot_id, symbol, weight});
+  if (res.ok) {
+    msg.style.color = '#50e350';
+    msg.textContent = `Bot ${res.bot_id.toUpperCase()} ajouté sur ${res.symbol}.`;
+    document.getElementById('new-bot-id').value = '';
+    document.getElementById('new-bot-symbol').value = '';
+    refresh();
+  } else {
+    msg.style.color = '#e88080';
+    msg.textContent = 'Refusé : ' + (res.error || 'erreur');
+  }
+}
+
 // Afficher/masquer les boutons kill/release selon l'etat
 function updateKillButtons(killActive) {
   document.getElementById('btn-kill').style.display    = killActive ? 'none'         : 'inline-block';
   document.getElementById('btn-release').style.display = killActive ? 'inline-block' : 'none';
 }
 
+// ─── P&L Curve (Chart.js) ────────────────────────────────────────────────────
+let pnlChart = null;
+
+async function loadPnlCurve(days) {
+  const data = await fetchJson('/api/pnl_curve?days=' + days);
+  if (!data || !data.points || data.points.length < 2) {
+    document.getElementById('pnl-stats').textContent = `Pas assez de données (${data?.n_points || 0} points sur ${days}j)`;
+    return;
+  }
+
+  const labels  = data.points.map(p => new Date(p.t).toLocaleString('fr-FR', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}));
+  const values  = data.points.map(p => p.v);
+  const pnls    = data.points.map(p => p.p);
+  const drawdowns = data.drawdowns;
+
+  // Stats
+  const last     = values[values.length-1];
+  const first    = values[0];
+  const pnlPct   = first > 0 ? ((last - first) / first * 100) : 0;
+  const maxDd    = Math.max(...drawdowns);
+  document.getElementById('pnl-stats').innerHTML =
+    `<span style="color:${pnlPct>=0?'#22c55e':'#ef4444'};">P&L ${days}j: ${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%</span> | ` +
+    `Min: $${Math.min(...values).toFixed(2)} | Max: $${Math.max(...values).toFixed(2)} | ` +
+    `Max drawdown: ${maxDd.toFixed(2)}%`;
+
+  // Construit ou met a jour le chart
+  const ctx = document.getElementById('pnl-chart').getContext('2d');
+  if (pnlChart) pnlChart.destroy();
+
+  pnlChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Portfolio (USDC)',
+          data: values,
+          borderColor: pnlPct >= 0 ? '#22c55e' : '#ef4444',
+          backgroundColor: pnlPct >= 0 ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+          tension: 0.3,
+          fill: true,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          borderWidth: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1a1f2e',
+          borderColor: '#2a3142',
+          borderWidth: 1,
+          callbacks: {
+            label: (ctx) => `${ctx.parsed.y.toFixed(2)} USDC (drawdown: ${drawdowns[ctx.dataIndex]}%)`,
+          },
+        },
+      },
+      scales: {
+        x: { ticks: { color: '#6b7585', maxRotation: 0, autoSkipPadding: 30 },
+             grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#6b7585', callback: v => '$' + v.toFixed(0) },
+             grid: { color: 'rgba(255,255,255,0.04)' } },
+      },
+    },
+  });
+}
+
+// ─── Tabs ────────────────────────────────────────────────────────────────────
+function switchTab(panelId, tabEl) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(panelId).classList.add('active');
+  tabEl.classList.add('active');
+}
+
+// ─── Signal Diagnostic ───────────────────────────────────────────────────────
+// Remplit le sélecteur de bot du panneau diagnostic (préserve la sélection).
+function populateDiagSelect(swarm) {
+  const sel = document.getElementById('diag-bot');
+  if (!sel) return;
+  const ids = swarm.map(b => b.bot_id).join(',');
+  if (sel.dataset.ids === ids) return;   // pas de changement de roster
+  const prev = sel.value;
+  sel.innerHTML = swarm.map(b =>
+    `<option value="${b.bot_id}">${(b.name || b.bot_id).toUpperCase()} — ${b.symbol}</option>`
+  ).join('');
+  sel.value = swarm.some(b => b.bot_id === prev) ? prev : (swarm[0] ? swarm[0].bot_id : '');
+  sel.dataset.ids = ids;
+  if (sel.value !== prev) loadSignalDebug();
+}
+
+async function loadSignalDebug() {
+  const sel = document.getElementById('diag-bot');
+  const botId = sel && sel.value ? sel.value : '';
+  const d = await fetchJson('/api/signal_debug' + (botId ? '?bot_id=' + botId : ''));
+  if (!d) return;
+
+  const maxScore = 3.5;  // poids total théorique max (1.5 + 1.0 + 1.0)
+  const thresh   = d.threshold || 1.2;
+
+  // Barres de vote
+  const buyPct  = Math.min(100, (d.buy_score  / maxScore) * 100);
+  const sellPct = Math.min(100, (d.sell_score / maxScore) * 100);
+  document.getElementById('vote-buy-bar').style.width  = buyPct  + '%';
+  document.getElementById('vote-sell-bar').style.width = sellPct + '%';
+  document.getElementById('vote-buy-score').textContent  = d.buy_score?.toFixed(2)  || '0.00';
+  document.getElementById('vote-sell-score').textContent = d.sell_score?.toFixed(2) || '0.00';
+  document.getElementById('vote-threshold').textContent  = thresh.toFixed(2);
+
+  // Votants
+  const buyV  = d.voters_buy  || [];
+  const sellV = d.voters_sell || [];
+  document.getElementById('vote-buy-voters').textContent  = buyV.length  ? '▲ ' + buyV.join(', ')  : 'aucun votant';
+  document.getElementById('vote-sell-voters').textContent = sellV.length ? '▼ ' + sellV.join(', ') : 'aucun votant';
+
+  // Status
+  const maxS = Math.max(d.buy_score || 0, d.sell_score || 0);
+  let statusText = 'En attente de signal fort';
+  let statusColor = '#8b95a7';
+  if (maxS >= thresh) {
+    statusText  = (d.buy_score > d.sell_score ? '🟢 BUY déclenché' : '🔴 SELL déclenché');
+    statusColor = d.buy_score > d.sell_score ? '#50e350' : '#e35050';
+  } else if (maxS >= thresh * 0.7) {
+    statusText = '🟡 Signal faible (proche du seuil)';
+    statusColor = '#e3c050';
+  }
+  const statusEl = document.getElementById('vote-status');
+  statusEl.textContent = statusText;
+  statusEl.style.color = statusColor;
+
+  // Streak no-trade
+  if (d.last_trade_ts) {
+    const mins = Math.round((Date.now() - new Date(d.last_trade_ts)) / 60000);
+    const h = Math.floor(mins / 60), m = mins % 60;
+    document.getElementById('no-trade-since').textContent =
+      `Sans trade : ${h ? h + 'h ' : ''}${m}min`;
+  } else {
+    document.getElementById('no-trade-since').textContent = 'Aucun trade enregistré';
+  }
+
+  // Indicateurs
+  const meta = d.metadata || {};
+  const fmt2 = v => v != null ? parseFloat(v).toFixed(2) : '—';
+  const fmt4 = v => v != null ? parseFloat(v).toFixed(4) : '—';
+  document.getElementById('ind-rsi').textContent     = fmt2(meta.rsi);
+  document.getElementById('ind-macd').textContent    = fmt4(meta.macd_hist);
+  document.getElementById('ind-ema-fast').textContent= fmt2(meta.ema_fast);
+  document.getElementById('ind-ema-slow').textContent= fmt2(meta.ema_slow);
+  document.getElementById('ind-bb-low').textContent  = fmt2(meta.bb_lower);
+  document.getElementById('ind-bb-high').textContent = fmt2(meta.bb_upper);
+  document.getElementById('ind-vol').textContent     = fmt2(meta.vol_ratio);
+  document.getElementById('ind-atr').textContent     = meta.atr_pct != null ? (meta.atr_pct * 100).toFixed(3) + '%' : '—';
+  document.getElementById('ind-price').textContent   = fmt2(meta.price);
+
+  // Colorer RSI
+  const rsiChip = document.getElementById('ind-rsi').closest('.ind-chip');
+  rsiChip.className = 'ind-chip';
+  if (meta.rsi != null) {
+    if (meta.rsi <= 32)      rsiChip.classList.add('signal-buy');
+    else if (meta.rsi >= 68) rsiChip.classList.add('signal-sell');
+    else if (meta.rsi < 40 || meta.rsi > 60) rsiChip.classList.add('warn');
+  }
+
+  if (d.symbol && d.timestamp) {
+    document.getElementById('ind-symbol-ts').textContent =
+      d.symbol + ' — ' + d.timestamp.substring(0, 19).replace('T', ' ') + ' UTC';
+  }
+}
+
+// ─── Trades exécutés ─────────────────────────────────────────────────────────
+async function loadTrades() {
+  const data = await fetchJson('/api/trades');
+  const tc = document.getElementById('trades-container');
+  if (!data || data.length === 0) {
+    tc.innerHTML = '<div style="padding:20px;text-align:center;color:#6b7585;font-style:italic;">Aucun trade exécuté pour l\'instant — le bot attend un signal fort (score ≥ seuil).</div>';
+    return;
+  }
+  let html = '<table><thead><tr><th>Heure</th><th>Symbole</th><th>Action</th><th class="num">Conf.</th><th>Détail</th></tr></thead><tbody>';
+  data.forEach(d => {
+    const cls = d.action === 'buy' ? 'pos-up' : d.action === 'sell' ? 'pos-down' : '';
+    html += `<tr>
+      <td>${d.timestamp.substring(0, 19).replace('T', ' ')}</td>
+      <td><strong>${d.symbol || '—'}</strong></td>
+      <td class="${cls}">${d.action}</td>
+      <td class="num">${d.confidence != null ? Math.round(d.confidence*100) + '%' : '—'}</td>
+      <td style="color:#8b95a7;font-size:0.85em;">${(d.reasoning||'').substring(0,60)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  tc.innerHTML = html;
+}
+
 refresh();
+loadPnlCurve(30);
+loadSignalDebug();
+loadTrades();
 setInterval(refresh, 8000);
+setInterval(loadSignalDebug, 15000);
+setInterval(loadTrades, 30000);
+setInterval(() => loadPnlCurve(30), 60000);
 </script>
 </body>
 </html>"""
@@ -626,6 +1146,14 @@ BOT_HTML = r"""<!DOCTYPE html>
       <div class="stat"><span class="label">Prix actuel</span><span class="value" id="pos-current">—</span></div>
       <div class="stat"><span class="label">P&L live</span><span class="value" id="pos-pnl">—</span></div>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Trades clôturés (net de frais)</h2>
+    <div class="stat"><span class="label">Trades clôturés</span><span class="value" id="ts-closed">—</span></div>
+    <div class="stat"><span class="label">Gagnants</span><span class="value" id="ts-wins">—</span></div>
+    <div class="stat"><span class="label">Taux de réussite</span><span class="value" id="ts-winrate">—</span></div>
+    <div class="stat"><span class="label">P&L net réalisé</span><span class="value" id="ts-pnl">—</span></div>
   </div>
 
   <div class="card">
@@ -742,9 +1270,11 @@ async function refresh() {
     document.getElementById('pos-entry').textContent = '$' + fmt(pos.avg_price);
     document.getElementById('pos-current').textContent = bot.current_price ? '$' + fmt(bot.current_price) : '—';
     if (bot.current_price) {
-      const pnlPct = (bot.current_price - pos.avg_price) / pos.avg_price * 100;
+      const feeRt  = dir?.round_trip_fee_pct ?? 0.012;
+      const pnlPct = ((bot.current_price - pos.avg_price) / pos.avg_price - feeRt) * 100;
+      const pnlUsd = pos.qty * (bot.current_price - pos.avg_price) - feeRt * pos.qty * pos.avg_price;
       const el = document.getElementById('pos-pnl');
-      el.textContent = fmtPct(pnlPct) + ' ($' + fmt(pos.qty*(bot.current_price-pos.avg_price)) + ')';
+      el.textContent = fmtPct(pnlPct) + ' ($' + fmt(pnlUsd) + ')';
       el.style.color = pnlPct >= 0 ? '#50e350' : '#e35050';
     }
   } else {
@@ -753,6 +1283,15 @@ async function refresh() {
     document.getElementById('pos-current').textContent = '—';
     document.getElementById('pos-pnl').textContent = '—';
   }
+
+  // Trades clôturés (net de frais)
+  const ts = bot.trade_stats || {n_closed:0, wins:0, win_rate:null, net_pnl_usdc:0};
+  document.getElementById('ts-closed').textContent = ts.n_closed;
+  document.getElementById('ts-wins').textContent   = ts.n_closed ? (ts.wins + ' / ' + ts.n_closed) : '—';
+  document.getElementById('ts-winrate').textContent = ts.win_rate != null ? Math.round(ts.win_rate*100)+'%' : '—';
+  const tsPnl = document.getElementById('ts-pnl');
+  tsPnl.textContent = (ts.net_pnl_usdc>=0?'+':'') + '$' + fmt(ts.net_pnl_usdc);
+  tsPnl.style.color = ts.n_closed === 0 ? '#9aa4b2' : (ts.net_pnl_usdc >= 0 ? '#50e350' : '#e35050');
 
   // Indicateurs
   document.getElementById('ind-warm').textContent   = bot.warmed_up ? '✅ Prêt (51 prix chargés)' : ('🔄 ' + bot.history_len + '/51 prix');
@@ -834,11 +1373,23 @@ async def handle_portfolio(request: web.Request) -> web.Response:
         last_dec    = conn.execute(
             "SELECT timestamp FROM decisions ORDER BY timestamp DESC LIMIT 1"
         ).fetchone()
-        first_snap  = conn.execute(
-            "SELECT total_usdc FROM portfolio_snapshots ORDER BY timestamp ASC LIMIT 1"
-        ).fetchone()
+        live_ts     = _live_start_ts(conn)
+        if live_ts:
+            # En live : base = 1er snapshot live (ce matin), pas les snapshots paper.
+            first_snap = conn.execute(
+                "SELECT total_usdc FROM portfolio_snapshots "
+                "WHERE timestamp >= ? ORDER BY timestamp ASC LIMIT 1",
+                (live_ts,),
+            ).fetchone()
+        else:
+            first_snap = conn.execute(
+                "SELECT total_usdc FROM portfolio_snapshots ORDER BY timestamp ASC LIMIT 1"
+            ).fetchone()
 
-    initial = (first_snap["total_usdc"] if first_snap else None) or 10_000.0
+    if MODE == "live":
+        initial = LIVE_INITIAL_USDC or (first_snap["total_usdc"] if first_snap else None) or 0.0
+    else:
+        initial = (first_snap["total_usdc"] if first_snap else None) or 10_000.0
     peak    = director._peak_value if director else None
     pnl_pct = ((total - initial) / initial * 100) if total and initial > 0 else None
 
@@ -867,6 +1418,7 @@ async def handle_director(request: web.Request) -> web.Response:
 
     return web.json_response({
         "mode":               MODE,
+        "round_trip_fee_pct": ROUND_TRIP_FEE_PCT,
         "kill_switch_active": trading_state.is_kill_switch_active(),
         "kill_reason":        trading_state.get_kill_reason(),
         "peak_value":         director._peak_value   if director else None,
@@ -897,6 +1449,204 @@ async def handle_decisions(request: web.Request) -> web.Response:
         rows = conn.execute(
             "SELECT timestamp, symbol, role, task_type, action, confidence, reasoning "
             "FROM decisions ORDER BY timestamp DESC LIMIT 20"
+        ).fetchall()
+    return web.json_response([dict(r) for r in rows])
+
+
+async def handle_pnl_curve(request: web.Request) -> web.Response:
+    """
+    Retourne la courbe P&L : serie chronologique des snapshots portfolio.
+    Format : [{t: timestamp_iso, v: total_usdc, p: pnl_pct}, ...]
+    Limite : 500 points (downsample si plus).
+    """
+    days = int(request.query.get("days", "30"))
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    with _db() as conn:
+        # En live : on tronque avant le passage en live pour ne pas tracer le paper (~10000).
+        live_ts = _live_start_ts(conn)
+        if live_ts and live_ts > since:
+            since = live_ts
+        rows = conn.execute(
+            "SELECT timestamp, total_usdc, pnl_pct FROM portfolio_snapshots "
+            "WHERE timestamp >= ? ORDER BY timestamp ASC",
+            (since,),
+        ).fetchall()
+
+    points = [dict(r) for r in rows]
+
+    # Downsample si > 500 points (1 sur N pour atteindre ~500)
+    if len(points) > 500:
+        step = len(points) // 500 + 1
+        points = points[::step]
+
+    # Calcule le drawdown courant
+    max_val      = 0.0
+    drawdowns    = []
+    for p in points:
+        v = p.get("total_usdc", 0) or 0
+        if v > max_val:
+            max_val = v
+        dd = (max_val - v) / max_val * 100 if max_val > 0 else 0
+        drawdowns.append(round(dd, 2))
+
+    return web.json_response({
+        "points":    [
+            {"t": p["timestamp"], "v": p["total_usdc"], "p": p.get("pnl_pct", 0)}
+            for p in points
+        ],
+        "drawdowns": drawdowns,
+        "max_value": max_val,
+        "min_value": min((p["total_usdc"] for p in points), default=0),
+        "n_points":  len(points),
+    })
+
+
+async def handle_signal_debug(request: web.Request) -> web.Response:
+    """Dernier signal d'un bot donné (?bot_id=) avec vote breakdown + indicateurs.
+
+    Sans bot_id : dernier signal tous bots confondus (compat ascendante).
+    """
+    threshold = float(os.getenv("ENSEMBLE_MIN_SCORE", "1.2"))
+
+    # Résolution bot_id -> symbole via le swarm (pour filtrer le bon bot)
+    symbol = None
+    bot_id = (request.query.get("bot_id") or "").lower().strip()
+    if bot_id:
+        swarm = _get_swarm()
+        if swarm:
+            bot = next((b for b in swarm.bots if b.bot_id == bot_id), None)
+            if bot:
+                symbol = bot.symbol
+
+    with _db() as conn:
+        if symbol:
+            row = conn.execute(
+                "SELECT timestamp, symbol, action, confidence, reasoning, metadata "
+                "FROM decisions WHERE task_type='signal' AND symbol=? "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+            last_trade = conn.execute(
+                "SELECT timestamp FROM decisions WHERE task_type='order' "
+                "AND action IN ('buy','sell') AND symbol=? "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT timestamp, symbol, action, confidence, reasoning, metadata "
+                "FROM decisions WHERE task_type='signal' ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+            last_trade = conn.execute(
+                "SELECT timestamp FROM decisions WHERE task_type='order' AND action IN ('buy','sell') "
+                "ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+
+    if not row:
+        return web.json_response({"threshold": threshold, "symbol": symbol})
+
+    meta: dict = {}
+    try:
+        raw = row["metadata"]
+        if raw:
+            import ast
+            meta = ast.literal_eval(raw) if isinstance(raw, str) else raw
+    except Exception:
+        pass
+
+    return web.json_response({
+        "timestamp":     row["timestamp"],
+        "symbol":        row["symbol"],
+        "action":        row["action"],
+        "confidence":    row["confidence"],
+        "buy_score":     meta.get("ensemble_buy",  0.0),
+        "sell_score":    meta.get("ensemble_sell", 0.0),
+        "voters_buy":    meta.get("ensemble_voters_buy",  []),
+        "voters_sell":   meta.get("ensemble_voters_sell", []),
+        "threshold":     threshold,
+        "metadata":      {k: v for k, v in meta.items()
+                          if k not in ("ensemble_buy", "ensemble_sell",
+                                       "ensemble_voters_buy", "ensemble_voters_sell")},
+        "last_trade_ts": last_trade["timestamp"] if last_trade else None,
+    })
+
+
+def _realized_stats(conn) -> dict[str, dict]:
+    """Apparie les BUY/SELL (FIFO) par symbole et calcule le P&L net realise.
+
+    Source : decisions.metadata (qty/price), idem que le journal CSV. Le DB ne
+    stocke pas de prix bruts hors metadata d'ordre, donc rien de nouveau n'est
+    persiste ici : lecture seule, zero impact sur les ordres.
+
+    Retourne {symbol: {n_closed, wins, win_rate, net_pnl_usdc}}.
+    """
+    rows = conn.execute(
+        "SELECT symbol, action, metadata FROM decisions "
+        "WHERE task_type='order' AND role='orchestrator' "
+        "AND action IN ('buy','sell') ORDER BY timestamp ASC"
+    ).fetchall()
+
+    lots: dict[str, list[list[float]]] = {}   # symbol -> [[qty, price], ...]
+    stats: dict[str, dict] = {}
+
+    for row in rows:
+        sym = row["symbol"]
+        try:
+            meta  = json.loads(row["metadata"]) if row["metadata"] else {}
+            qty   = float(meta.get("qty", 0))
+            price = float(meta.get("price", 0))
+        except Exception:
+            continue
+        if qty <= 0 or price <= 0:
+            continue
+
+        lots.setdefault(sym, [])
+        st = stats.setdefault(sym, {"n_closed": 0, "wins": 0, "net_pnl_usdc": 0.0})
+
+        if row["action"] == "buy":
+            lots[sym].append([qty, price])
+            continue
+
+        # SELL : apparie FIFO contre les lots d'achat
+        remaining = qty
+        net = 0.0
+        matched = False
+        while remaining > 1e-12 and lots[sym]:
+            lot = lots[sym][0]
+            take = min(remaining, lot[0])
+            cost = take * lot[1]
+            net += take * (price - lot[1]) - ROUND_TRIP_FEE_PCT * cost
+            remaining -= take
+            lot[0]    -= take
+            matched = True
+            if lot[0] <= 1e-12:
+                lots[sym].pop(0)
+        if matched:
+            st["n_closed"]    += 1
+            st["net_pnl_usdc"] += net
+            if net > 0:
+                st["wins"] += 1
+
+    for sym, st in stats.items():
+        st["net_pnl_usdc"] = round(st["net_pnl_usdc"], 4)
+        st["win_rate"]     = round(st["wins"] / st["n_closed"], 3) if st["n_closed"] else None
+    return stats
+
+
+async def handle_trade_stats(request: web.Request) -> web.Response:
+    """Stats de trades clotures (apparies FIFO) par symbole — lecture seule."""
+    with _db() as conn:
+        return web.json_response(_realized_stats(conn))
+
+
+async def handle_trades(request: web.Request) -> web.Response:
+    """Retourne les ordres executés (buy/sell réels, pas les signaux hold)."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT timestamp, symbol, role, action, confidence, reasoning "
+            "FROM decisions WHERE task_type='order' AND action IN ('buy','sell','rejected') "
+            "ORDER BY timestamp DESC LIMIT 50"
         ).fetchall()
     return web.json_response([dict(r) for r in rows])
 
@@ -956,6 +1706,16 @@ async def handle_bot_api(request: web.Request) -> web.Response:
     except Exception:
         bot["decisions"] = []
 
+    # Stats de trades clotures (apparies FIFO) pour ce symbole
+    try:
+        with _db() as conn:
+            bot["trade_stats"] = _realized_stats(conn).get(
+                bot["symbol"],
+                {"n_closed": 0, "wins": 0, "win_rate": None, "net_pnl_usdc": 0.0},
+            )
+    except Exception:
+        bot["trade_stats"] = {"n_closed": 0, "wins": 0, "win_rate": None, "net_pnl_usdc": 0.0}
+
     return web.json_response(bot)
 
 
@@ -975,6 +1735,54 @@ async def handle_bot_resume(request: web.Request) -> web.Response:
     trading_state.resume(bot_id)
     log.info("bot_resumed_via_dashboard", bot_id=bot_id)
     return web.json_response({"ok": True, "bot_id": bot_id, "action": "resumed"})
+
+
+async def handle_setpair(request: web.Request) -> web.Response:
+    """POST /api/bot/<id>/setpair {symbol} — change la paire d'un bot."""
+    swarm = _get_swarm()
+    if not swarm:
+        return web.json_response({"ok": False, "error": "swarm non disponible"}, status=503)
+    bot_id = request.match_info["bot_id"].lower()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    symbol = (body.get("symbol") or "").strip()
+    if not symbol:
+        return web.json_response({"ok": False, "error": "symbole manquant"}, status=400)
+    res = await swarm.set_pair(bot_id, symbol)
+    return web.json_response(res, status=200 if res.get("ok") else 400)
+
+
+async def handle_addbot(request: web.Request) -> web.Response:
+    """POST /api/bots/add {bot_id, symbol, weight} — ajoute un bot."""
+    swarm = _get_swarm()
+    if not swarm:
+        return web.json_response({"ok": False, "error": "swarm non disponible"}, status=503)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    bot_id = (body.get("bot_id") or "").strip()
+    symbol = (body.get("symbol") or "").strip()
+    try:
+        weight = float(body.get("weight", 0.1))
+    except (TypeError, ValueError):
+        weight = 0.1
+    if not bot_id or not symbol:
+        return web.json_response({"ok": False, "error": "bot_id et symbol requis"}, status=400)
+    res = await swarm.add_bot(bot_id, symbol, weight=weight, name=bot_id.upper())
+    return web.json_response(res, status=200 if res.get("ok") else 400)
+
+
+async def handle_removebot(request: web.Request) -> web.Response:
+    """POST /api/bot/<id>/remove — retire un bot du swarm."""
+    swarm = _get_swarm()
+    if not swarm:
+        return web.json_response({"ok": False, "error": "swarm non disponible"}, status=503)
+    bot_id = request.match_info["bot_id"].lower()
+    res = await swarm.remove_bot(bot_id)
+    return web.json_response(res, status=200 if res.get("ok") else 400)
 
 
 async def handle_kill(request: web.Request) -> web.Response:
@@ -1008,10 +1816,17 @@ def build_app() -> web.Application:
     app.router.add_get("/api/director",            handle_director)
     app.router.add_get("/api/decisions",           handle_decisions)
     app.router.add_get("/api/history",             handle_history)
+    app.router.add_get("/api/pnl_curve",            handle_pnl_curve)
+    app.router.add_get("/api/signal_debug",        handle_signal_debug)
+    app.router.add_get("/api/trades",              handle_trades)
+    app.router.add_get("/api/trade_stats",         handle_trade_stats)
     app.router.add_get("/api/bot/{bot_id}",        handle_bot_api)
     # API controles
     app.router.add_post("/api/bot/{bot_id}/pause",  handle_bot_pause)
     app.router.add_post("/api/bot/{bot_id}/resume", handle_bot_resume)
+    app.router.add_post("/api/bot/{bot_id}/setpair", handle_setpair)
+    app.router.add_post("/api/bot/{bot_id}/remove", handle_removebot)
+    app.router.add_post("/api/bots/add",            handle_addbot)
     app.router.add_post("/api/kill",               handle_kill)
     app.router.add_post("/api/release",            handle_release)
     return app

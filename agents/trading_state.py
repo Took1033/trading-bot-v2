@@ -59,3 +59,83 @@ def get_kill_reason() -> str | None:
 def get_all_paused() -> dict[str, bool]:
     """Retourne l'etat de pause de tous les bots."""
     return dict(_paused)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fear & Greed Index (publie par DirectorAgent, lu par RiskAgent)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_fg_value: int | None = None
+_fg_label: str        = "—"
+
+
+def set_fear_greed(value: int | None, label: str = "—") -> None:
+    """Publie la derniere valeur F&G (appele par DirectorAgent)."""
+    global _fg_value, _fg_label
+    _fg_value = value
+    _fg_label = label
+
+
+def get_fear_greed() -> tuple[int | None, str]:
+    """Retourne (value, label) de la derniere mesure F&G. (None, '—') si jamais fetch."""
+    return _fg_value, _fg_label
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# News sentiment (publie par NewsSentiment, lu par RiskAgent)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_news_score:      float | None = None
+_news_commentary: str          = "—"
+
+
+def set_news_sentiment(score: float | None, commentary: str = "—") -> None:
+    """Publie le sentiment global news (-1 = bearish, +1 = bullish)."""
+    global _news_score, _news_commentary
+    _news_score = score
+    _news_commentary = commentary
+
+
+def get_news_sentiment() -> tuple[float | None, str]:
+    return _news_score, _news_commentary
+
+
+def news_sentiment_multiplier(score: float | None) -> float:
+    """
+    Multiplicateur de position basé sur le sentiment news.
+
+    Score < -0.5 : 0.7x (defensif, news bearish)
+    Score < -0.2 : 0.85x
+    Score -0.2 a 0.2 : 1.0x (neutre)
+    Score > 0.2 : 1.05x
+    Score > 0.5 : 1.15x (legere agressivite, news bullish)
+    """
+    if score is None:
+        return 1.0
+    if score < -0.5:  return 0.70
+    if score < -0.2:  return 0.85
+    if score < 0.2:   return 1.00
+    if score < 0.5:   return 1.05
+    return 1.15
+
+
+def fear_greed_position_multiplier(fg_value: int | None) -> float:
+    """
+    Retourne un multiplicateur de taille de position basé sur F&G.
+
+    Logique : on achete plus quand le marche panique (acheter la peur),
+    on achete moins quand le marche est euphorique (eviter les tops).
+
+    F&G  0-20  : Extreme Fear   → 1.30x  (opportunite historique)
+    F&G 20-40  : Fear           → 1.15x  (legere agressivite)
+    F&G 40-60  : Neutral        → 1.00x  (par defaut)
+    F&G 60-80  : Greed          → 0.85x  (prudence)
+    F&G 80-100 : Extreme Greed  → 0.60x  (forte reduction, risque de top)
+    """
+    if fg_value is None:
+        return 1.0
+    if fg_value < 20:  return 1.30
+    if fg_value < 40:  return 1.15
+    if fg_value < 60:  return 1.00
+    if fg_value < 80:  return 0.85
+    return 0.60

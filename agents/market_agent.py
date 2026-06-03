@@ -16,13 +16,20 @@ import structlog
 from dotenv import load_dotenv
 
 from interfaces.coinbase_client import CoinbaseClient
-from strategies.simple_ma import Signal, analyze
+from strategies.simple_ma   import Signal
+from strategies.ensemble    import analyze as ensemble_analyze
+from strategies.simple_ma   import analyze as simple_ma_analyze
 
 load_dotenv()
 log = structlog.get_logger()
 
-PRICE_HISTORY_SIZE = int(os.getenv("PRICE_HISTORY_SIZE", "30"))
+PRICE_HISTORY_SIZE = int(os.getenv("PRICE_HISTORY_SIZE", "60"))
 LOOP_INTERVAL_S    = int(os.getenv("LOOP_INTERVAL_S", "60"))
+
+# Active la strategie ensemble (vote pondere entre 3 strategies)
+# Sinon utilise simple_ma seul (fallback / debug)
+USE_ENSEMBLE = os.getenv("USE_ENSEMBLE_STRATEGY", "true").lower() in ("true", "1", "yes")
+analyze = ensemble_analyze if USE_ENSEMBLE else simple_ma_analyze
 
 # Correspondance intervalle -> granularite Coinbase Exchange API (en secondes)
 _GRAN_MAP = {60: 60, 300: 300, 900: 900, 3600: 3600, 21600: 21600, 86400: 86400}

@@ -11,16 +11,23 @@ __pycache__/
 venv/
 env/
 
-# Base de données locale
+# Base de données locale + backups
 memory/*.db
 memory/*.db-journal
+memory/backups/
 
 # Config Telegram (chat_id privé)
 memory/telegram_config.json
 
-# Logs
-logs/*.log
-logs/*.txt
+# Donnees runtime (prix bruts, P&L, order_id -> leakage prevention)
+memory/trade_journal.csv
+memory/tuning_proposals/
+memory/.first_live_trade.txt
+memory/.milestones.json
+startup_out.txt
+
+# Logs (incluant rotations .log.1, .log.2, ...)
+logs/
 
 # OS
 .DS_Store

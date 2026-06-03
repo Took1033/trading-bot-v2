@@ -27,8 +27,10 @@ from pathlib import Path
 
 import structlog
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application, CallbackQueryHandler, CommandHandler, ContextTypes,
+)
 
 load_dotenv()
 log = structlog.get_logger()
@@ -36,6 +38,8 @@ log = structlog.get_logger()
 TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "")
 DB_PATH = os.getenv("DB_PATH", "memory/trading.db")
 MODE    = os.getenv("COINBASE_MODE", "paper")
+# Frais round-trip Coinbase (taker x2) — P&L affiche net de frais.
+ROUND_TRIP_FEE_PCT = 2 * float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.006"))
 _CONFIG = Path(DB_PATH).parent / "telegram_config.json"
 
 
@@ -72,6 +76,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "`/release`       — relâcher le kill switch\n"
         "`/pause btc|eth|sol|dyn|all` — pause individuelle\n"
         "`/resume [bot|all]`          — reprendre\n\n"
+        "*Configuration des paires :*\n"
+        "`/setpair <bot> <SYMBOLE>`   — changer la paire d'un bot\n"
+        "`/addbot <id> <SYMBOLE> [poids]` — ajouter un bot\n"
+        "`/removebot <id>`            — retirer un bot\n\n"
         "*Infos*\n"
         "`/register`  — activer les notifications\n"
         "`/status`    — état complet (RSI, EMA, position)\n"
@@ -378,8 +386,8 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         if current_price and "BTC" in sym:
             value   = qty * current_price
-            pnl     = value - cost
-            pnl_pct = (current_price - entry) / entry * 100
+            pnl     = value - cost - ROUND_TRIP_FEE_PCT * cost
+            pnl_pct = ((current_price - entry) / entry - ROUND_TRIP_FEE_PCT) * 100
             emoji   = "🟢" if pnl >= 0 else "🔴"
             lines.append(
                 f"\n{emoji} `{sym}`\n"
@@ -601,7 +609,77 @@ async def cmd_bots(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reason = trading_state.get_kill_reason() or "—"
         lines.append(f"\n🚨 Raison : _{reason}_")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    # Boutons inline : pause/resume rapide + kill switch
+    bot_ids = [b["bot_id"] if "bot_id" in b else b["name"].lower()
+               for b in swarm.get_status()]
+    rows: list[list[InlineKeyboardButton]] = []
+    for bid in bot_ids[:4]:
+        paused = trading_state.is_paused(bid)
+        if paused:
+            rows.append([
+                InlineKeyboardButton(f"▶️ Reprendre {bid.upper()}", callback_data=f"resume:{bid}"),
+            ])
+        else:
+            rows.append([
+                InlineKeyboardButton(f"⏸ Pause {bid.upper()}", callback_data=f"pause:{bid}"),
+            ])
+    if ks_active:
+        rows.append([InlineKeyboardButton("🟢 Relâcher KILL", callback_data="release_kill")])
+    else:
+        rows.append([InlineKeyboardButton("🛑 KILL SWITCH global", callback_data="trigger_kill")])
+    rows.append([InlineKeyboardButton("🔄 Rafraîchir", callback_data="refresh_bots")])
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+
+
+async def cmd_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle les clics sur les boutons inline."""
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+
+    data = query.data or ""
+    from agents import trading_state
+
+    if data == "refresh_bots":
+        # Re-trigger cmd_bots avec une fake update
+        msg = update.callback_query.message
+        if msg:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        # Renvoyer le panneau a jour
+        fake = Update(update.update_id, message=msg)
+        await cmd_bots(fake, context)
+        return
+
+    if data == "trigger_kill":
+        trading_state.kill_switch("Kill manuel via bouton Telegram")
+        await query.message.reply_text("🛑 *Kill switch ACTIVE*", parse_mode="Markdown")
+        return
+
+    if data == "release_kill":
+        trading_state.release_kill_switch()
+        await query.message.reply_text("🟢 *Kill switch RELACHE*", parse_mode="Markdown")
+        return
+
+    if data.startswith("pause:"):
+        bid = data.split(":", 1)[1]
+        trading_state.pause(bid)
+        await query.message.reply_text(f"⏸ Bot `{bid.upper()}` pausé.", parse_mode="Markdown")
+        return
+
+    if data.startswith("resume:"):
+        bid = data.split(":", 1)[1]
+        trading_state.resume(bid)
+        await query.message.reply_text(f"▶️ Bot `{bid.upper()}` repris.", parse_mode="Markdown")
+        return
 
 
 async def cmd_kill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -698,6 +776,171 @@ async def _resume_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     log.info("bot_resumed_by_user", target=target, user=update.effective_user.username)
 
 
+async def cmd_tune(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lance manuellement le param tuner Opus."""
+    await update.message.reply_text(
+        "🧠 _Opus analyse les 30 derniers jours..._ (peut prendre 30-60s)",
+        parse_mode="Markdown",
+    )
+    try:
+        from agents.param_tuner import run_tuning_once
+        sent = await run_tuning_once()
+        if not sent:
+            await update.message.reply_text(
+                "⚠️ Aucune proposition générée (trop peu de trades ou Anthropic indisponible).",
+                parse_mode="Markdown",
+            )
+    except Exception as exc:
+        await update.message.reply_text(f"❌ Erreur : `{exc}`", parse_mode="Markdown")
+
+
+async def cmd_ask(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Pose une question a Claude sur le bot. Usage : /ask <question>"""
+    if not update.message or not update.message.text:
+        return
+
+    question = update.message.text.replace("/ask", "", 1).strip()
+    if not question:
+        await update.message.reply_text(
+            "Usage : `/ask <question>`\n\n"
+            "Exemples :\n"
+            "  `/ask pourquoi le bot n'a rien acheté aujourd'hui ?`\n"
+            "  `/ask quelle est ma performance ?`\n"
+            "  `/ask explique-moi le kill switch`",
+            parse_mode="Markdown",
+        )
+        return
+
+    from interfaces.claude_client import answer_user_question, ENABLED
+    if not ENABLED:
+        await update.message.reply_text(
+            "⚠️ ANTHROPIC_API_KEY non configurée dans `.env` — `/ask` indisponible.",
+            parse_mode="Markdown",
+        )
+        return
+
+    # Construction du contexte courant pour Claude
+    await update.message.reply_text("🧠 _Claude réfléchit..._", parse_mode="Markdown")
+
+    swarm    = _resolve_swarm()
+    director = _resolve_director()
+    ctx: dict = {}
+    try:
+        if swarm:
+            statuses = swarm.get_status()
+            ctx["mode"]          = statuses.get("mode")
+            ctx["n_bots"]        = len(statuses.get("bots", []))
+            ctx["total_value"]   = statuses.get("total_value")
+            ctx["pnl_pct"]       = statuses.get("pnl_pct")
+            ctx["kill_switch"]   = statuses.get("kill_switch")
+        if director:
+            ctx["fear_greed"]       = getattr(director, "_fg_value", None)
+            ctx["fear_greed_label"] = getattr(director, "_fg_label", None)
+    except Exception:
+        pass
+
+    answer = await answer_user_question(question, ctx)
+    if not answer:
+        await update.message.reply_text(
+            "❌ Pas de réponse (timeout ou erreur API).",
+            parse_mode="Markdown",
+        )
+        return
+
+    await update.message.reply_text(
+        f"🧠 *Réponse Claude :*\n\n{answer}",
+        parse_mode="Markdown",
+    )
+    log.info("ask_answered", user=update.effective_user.username,
+             question=question[:80], answer_chars=len(answer))
+
+
+async def cmd_setpair(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/setpair <bot> <SYMBOL> — change la paire d'un bot à chaud."""
+    swarm = _get_swarm()
+    if not swarm:
+        await update.message.reply_text("_Swarm non disponible._", parse_mode="Markdown")
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage : `/setpair <bot> <SYMBOLE>`\nEx : `/setpair eth LINK-USDC`",
+            parse_mode="Markdown",
+        )
+        return
+    bot_id  = _BOT_ALIASES.get(context.args[0].lower(), context.args[0].lower())
+    symbol  = context.args[1].upper()
+    res = await swarm.set_pair(bot_id, symbol)
+    if res["ok"]:
+        await update.message.reply_text(
+            f"🔄 *Paire changée* — `{res['bot_id'].upper()}`\n"
+            f"`{res['old']}` → `{res['new']}`\nWarm-up relancé, trading actif au prochain tick.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(f"⚠️ `{res['error']}`", parse_mode="Markdown")
+    log.info("setpair_via_telegram", bot=bot_id, symbol=symbol, ok=res["ok"])
+
+
+async def cmd_addbot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/addbot <bot_id> <SYMBOL> [poids] — ajoute un bot à la volée."""
+    swarm = _get_swarm()
+    if not swarm:
+        await update.message.reply_text("_Swarm non disponible._", parse_mode="Markdown")
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage : `/addbot <id> <SYMBOLE> [poids]`\nEx : `/addbot ada ADA-USDC 0.1`",
+            parse_mode="Markdown",
+        )
+        return
+    bot_id = context.args[0].lower()
+    symbol = context.args[1].upper()
+    try:
+        weight = float(context.args[2]) if len(context.args) > 2 else 0.1
+    except ValueError:
+        await update.message.reply_text("⚠️ Le poids doit être un nombre (ex: 0.1)", parse_mode="Markdown")
+        return
+    res = await swarm.add_bot(bot_id, symbol, weight=weight, name=bot_id.upper())
+    if res["ok"]:
+        await update.message.reply_text(
+            f"➕ *Bot ajouté* — `{res['bot_id'].upper()}` sur `{res['symbol']}` "
+            f"({res['weight']:.0%})\nTâche démarrée, warm-up en cours.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(f"⚠️ `{res['error']}`", parse_mode="Markdown")
+    log.info("addbot_via_telegram", bot=bot_id, symbol=symbol, ok=res["ok"])
+
+
+async def cmd_removebot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/removebot <bot_id> — retire un bot du swarm."""
+    swarm = _get_swarm()
+    if not swarm:
+        await update.message.reply_text("_Swarm non disponible._", parse_mode="Markdown")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage : `/removebot <id>`", parse_mode="Markdown")
+        return
+    bot_id = _BOT_ALIASES.get(context.args[0].lower(), context.args[0].lower())
+    res = await swarm.remove_bot(bot_id)
+    if res["ok"]:
+        await update.message.reply_text(f"➖ Bot `{res['bot_id'].upper()}` retiré du swarm.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"⚠️ `{res['error']}`", parse_mode="Markdown")
+    log.info("removebot_via_telegram", bot=bot_id, ok=res["ok"])
+
+
+def _resolve_swarm():
+    """Récupère le swarm depuis __main__ (injecté par main.py)."""
+    import sys
+    return getattr(sys.modules.get("__main__"), "SWARM", None)
+
+
+def _resolve_director():
+    import sys
+    return getattr(sys.modules.get("__main__"), "DIRECTOR", None)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Construction de l'application
 # ──────────────────────────────────────────────────────────────────────────────
@@ -728,6 +971,15 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("kill",     cmd_kill))
     app.add_handler(CommandHandler("release",  cmd_release))
     app.add_handler(CommandHandler("pause",    cmd_pause_bot))
+    # Configuration des paires / roster (P1/P2)
+    app.add_handler(CommandHandler("setpair",   cmd_setpair))
+    app.add_handler(CommandHandler("addbot",    cmd_addbot))
+    app.add_handler(CommandHandler("removebot", cmd_removebot))
+    # Claude AI Q&A + param tuning
+    app.add_handler(CommandHandler("ask",      cmd_ask))
+    app.add_handler(CommandHandler("tune",     cmd_tune))
+    # Boutons inline (callback queries)
+    app.add_handler(CallbackQueryHandler(cmd_button_callback))
     return app
 
 

@@ -37,7 +37,7 @@ async def run_checks() -> int:
     """Retourne le nombre de checks en echec."""
     failures = 0
 
-    print("\n=== Trading Bot v2 - Health Check ===\n")
+    print("\n=== Kairos Alpha — Health Check ===\n")
 
     # -- 1. Imports -------------------------------------------------------
     print("[1] Imports des modules")
@@ -47,6 +47,10 @@ async def run_checks() -> int:
         ("agents.risk_agent",          "RiskAgent"),
         ("agents.memory_agent",        "MemoryAgent"),
         ("agents.trading_state",       "is_paused"),
+        ("agents.signal_validator",    "validate_signal"),
+        ("agents.bot_swarm",           "BotSwarm"),
+        ("agents.director_agent",      "DirectorAgent"),
+        ("agents.dynamic_bot",         "DynamicBot"),
         ("interfaces.coinbase_client", "CoinbaseClient"),
         ("interfaces.telegram_bot",    "build_app"),
         ("interfaces.notifier",        "notify"),

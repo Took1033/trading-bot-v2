@@ -155,8 +155,18 @@ async def daily_summary_loop() -> None:
 
             metrics = _compute_24h_metrics()
             message = _format_summary(metrics)
-            sent    = await notifier.notify(message)
 
+            # Enrichissement Claude Haiku : narration en 2 phrases
+            try:
+                from interfaces.claude_client import narrate_daily, ENABLED
+                if ENABLED:
+                    narrative = await narrate_daily(metrics)
+                    if narrative:
+                        message += f"\n\n🤖 _{narrative}_"
+            except Exception as exc:
+                log.debug("daily_narrative_skip", error=str(exc))
+
+            sent = await notifier.notify(message)
             log.info("daily_summary_sent", success=sent, metrics=metrics)
 
             # Petite marge pour eviter de redeclencher dans la meme minute
