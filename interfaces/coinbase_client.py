@@ -42,6 +42,17 @@ LIVE_MIN_TRACK_USDC = float(os.getenv("LIVE_MIN_TRACK_USDC", "5.0"))
 # Spread max accepte avant ordre (en %). Si bid/ask trop large = marche illiquide.
 MAX_SPREAD_PCT = float(os.getenv("LIVE_MAX_SPREAD_PCT", "0.15"))
 
+# ── Ordres MAKER (limit post-only) sur les entrees BUY ───────────────────────
+# Le maker paie ~moitie du taker -> divise ~par 2 le cout aller-retour et double
+# le R:R net. Mais le fill n'est PAS garanti : on pose un limit post-only au bid,
+# on attend MAKER_FILL_TIMEOUT_S, et si non rempli on annule + retombe sur le
+# market (taker) — donc au pire on garde le comportement actuel.
+# Desactive par defaut : a valider en live (poll/cancel SDK) avant activation.
+USE_MAKER_ENTRIES   = os.getenv("LIVE_USE_MAKER_ENTRIES", "false").lower() in ("true", "1", "yes")
+MAKER_FILL_TIMEOUT_S = float(os.getenv("MAKER_FILL_TIMEOUT_S", "45"))   # attente max de fill
+MAKER_POLL_S         = float(os.getenv("MAKER_POLL_S", "3"))           # intervalle de polling
+MAKER_FALLBACK_MARKET = os.getenv("MAKER_FALLBACK_MARKET", "true").lower() in ("true", "1", "yes")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Types
@@ -318,9 +329,12 @@ class CoinbaseClient:
         # ── Order book check : refus si spread trop large (marche illiquide) ──
         # `force=True` (stop-loss/trailing/TP) : on n'annule jamais une sortie de
         # protection a cause du spread, on logue seulement un avertissement.
+        bid = ask = None            # bruts du carnet (pour le maker) ; None si fetch KO
+        bid_str = None              # chaine d'origine -> precision de prix exacte
         try:
             bb = await self._run_sync(self._real_client.get_best_bid_ask, product_ids=[symbol])
             pb = bb.pricebooks[0]
+            bid_str = str(pb.bids[0].price)
             bid = float(pb.bids[0].price)
             ask = float(pb.asks[0].price)
             mid = (bid + ask) / 2
@@ -349,6 +363,23 @@ class CoinbaseClient:
                 raise ValueError(
                     f"Ordre trop petit : {usdc_amount:.2f} USDC < minimum {MIN_ORDER_USDC} USDC"
                 )
+
+            # ── Tentative MAKER (limit post-only au bid) sur les entrees ──────
+            # Jamais pour une sortie de protection (force=True). Si le carnet
+            # n'a pas ete recupere (bid None), on saute direct au market.
+            if USE_MAKER_ENTRIES and not force and bid is not None:
+                maker_order = await self._live_maker_buy(
+                    symbol, usdc_amount, bid, bid_str
+                )
+                if maker_order is not None:
+                    return maker_order
+                # maker non rempli / KO -> fallback market ci-dessous (si autorise)
+                if not MAKER_FALLBACK_MARKET:
+                    raise RuntimeError(
+                        f"Maker non rempli pour {symbol} et fallback market desactive"
+                    )
+                log.info("maker_fallback_to_market", symbol=symbol, usdc=usdc_amount)
+
             order_config = {
                 "market_market_ioc": {
                     "quote_size": str(usdc_amount)
@@ -401,6 +432,107 @@ class CoinbaseClient:
             symbol=symbol, side=side, qty=qty,
             price=price, order_id=order_id, status="filled",
         )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Ordres MAKER (limit post-only) — entrees BUY uniquement
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _decimals_of(num_str: str | None) -> int:
+        """Nombre de decimales d'une chaine de prix SDK (respect du tick de prix)."""
+        if not num_str or "." not in num_str:
+            return 2
+        return len(num_str.split(".")[1])
+
+    async def _get_order_status(self, order_id: str) -> tuple[str, float | None, float | None]:
+        """(status, filled_qty, avg_price). Robuste aux variations du SDK."""
+        try:
+            resp = await self._run_sync(self._real_client.get_order, order_id=order_id)
+            o = getattr(resp, "order", resp)
+            status = str(getattr(o, "status", "") or "").upper()
+            fq = getattr(o, "filled_size", None)
+            ap = getattr(o, "average_filled_price", None)
+            fq = float(fq) if fq not in (None, "") else None
+            ap = float(ap) if ap not in (None, "") else None
+            return status, fq, ap
+        except Exception as exc:
+            log.warning("get_order_status_error", order_id=order_id, error=str(exc))
+            return "UNKNOWN", None, None
+
+    async def _cancel_order(self, order_id: str) -> None:
+        try:
+            await self._run_sync(self._real_client.cancel_orders, order_ids=[order_id])
+            log.info("maker_order_cancelled", order_id=order_id)
+        except Exception as exc:
+            log.warning("cancel_order_error", order_id=order_id, error=str(exc))
+
+    async def _live_maker_buy(self, symbol: str, usdc_amount: float,
+                              bid: float, bid_str: str | None) -> Order | None:
+        """
+        Pose un BUY limit post-only au bid et attend le fill (jusqu'a timeout).
+        Retourne un Order rempli, ou None si non rempli / erreur (=> fallback market).
+        Toute exception est avalee -> None : on ne casse jamais l'execution.
+        """
+        try:
+            decimals    = self._decimals_of(bid_str)
+            limit_price = round(bid, decimals)
+            if limit_price <= 0:
+                return None
+            base_size   = round(usdc_amount / limit_price, 8)
+            order_id_cli = str(uuid.uuid4())
+            order_config = {
+                "limit_limit_gtc": {
+                    "base_size":   str(base_size),
+                    "limit_price": f"{limit_price:.{decimals}f}",
+                    "post_only":   True,
+                }
+            }
+            log.info("maker_buy_placing", symbol=symbol, limit_price=limit_price,
+                     base_size=base_size, usdc=usdc_amount, timeout_s=MAKER_FILL_TIMEOUT_S)
+
+            result = await self._run_sync(
+                self._real_client.create_order,
+                client_order_id=order_id_cli, product_id=symbol,
+                side="BUY", order_configuration=order_config,
+            )
+            if not getattr(result, "success", False):
+                log.warning("maker_buy_rejected", symbol=symbol,
+                            error=str(getattr(result, "error_response", {})))
+                return None
+            order_id = result.order_id if hasattr(result, "order_id") else order_id_cli
+
+            # Polling jusqu'au fill ou timeout
+            waited = 0.0
+            while waited < MAKER_FILL_TIMEOUT_S:
+                await asyncio.sleep(MAKER_POLL_S)
+                waited += MAKER_POLL_S
+                status, fq, ap = await self._get_order_status(order_id)
+                if status == "FILLED":
+                    qty_f, px_f = (fq or base_size), (ap or limit_price)
+                    self._live_port.update_buy(symbol, qty_f, px_f)
+                    log.info("maker_buy_filled", symbol=symbol, qty=round(qty_f, 8),
+                             price=round(px_f, 6), order_id=order_id, waited_s=waited)
+                    return Order(symbol=symbol, side="buy", qty=qty_f, price=px_f,
+                                 order_id=order_id, status="filled")
+                if status in ("CANCELLED", "EXPIRED", "FAILED", "REJECTED"):
+                    log.info("maker_buy_terminated", symbol=symbol, status=status)
+                    return None
+
+            # Timeout -> annuler, puis re-verifier (anti double-achat sur race)
+            await self._cancel_order(order_id)
+            status, fq, ap = await self._get_order_status(order_id)
+            if status == "FILLED":
+                qty_f, px_f = (fq or base_size), (ap or limit_price)
+                self._live_port.update_buy(symbol, qty_f, px_f)
+                log.info("maker_buy_filled_late", symbol=symbol, order_id=order_id)
+                return Order(symbol=symbol, side="buy", qty=qty_f, price=px_f,
+                             order_id=order_id, status="filled")
+            log.info("maker_buy_unfilled", symbol=symbol, order_id=order_id, waited_s=waited)
+            return None
+
+        except Exception as exc:
+            log.warning("maker_buy_error", symbol=symbol, error=str(exc))
+            return None
 
     # ─────────────────────────────────────────────────────────────────────────
     # Portefeuille
