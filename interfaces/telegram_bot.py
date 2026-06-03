@@ -38,6 +38,10 @@ log = structlog.get_logger()
 TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "")
 DB_PATH = os.getenv("DB_PATH", "memory/trading.db")
 MODE    = os.getenv("COINBASE_MODE", "paper")
+# Capital live initial + seuil paper/live (cf. dashboard) : en live, le P&L est
+# ancre sur LIVE_INITIAL_USDC et on ignore les snapshots paper residuels (~10000).
+LIVE_INITIAL_USDC = float(os.getenv("LIVE_INITIAL_USDC", "0") or "0")
+PAPER_LIVE_SPLIT  = float(os.getenv("PAPER_LIVE_SPLIT_USDC", "1000"))
 # Frais round-trip Coinbase (taker x2) — P&L affiche net de frais.
 ROUND_TRIP_FEE_PCT = 2 * float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.006"))
 _CONFIG = Path(DB_PATH).parent / "telegram_config.json"
@@ -254,9 +258,17 @@ async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             snap = conn.execute(
                 "SELECT * FROM portfolio_snapshots ORDER BY timestamp DESC LIMIT 1"
             ).fetchone()
-            first_snap = conn.execute(
-                "SELECT total_usdc FROM portfolio_snapshots ORDER BY timestamp ASC LIMIT 1"
-            ).fetchone()
+            # En live, ignore les snapshots paper residuels (~10000) pour le capital initial.
+            if MODE == "live":
+                first_snap = conn.execute(
+                    "SELECT total_usdc FROM portfolio_snapshots "
+                    "WHERE total_usdc < ? ORDER BY timestamp ASC LIMIT 1",
+                    (PAPER_LIVE_SPLIT,),
+                ).fetchone()
+            else:
+                first_snap = conn.execute(
+                    "SELECT total_usdc FROM portfolio_snapshots ORDER BY timestamp ASC LIMIT 1"
+                ).fetchone()
     except Exception:
         snap = None
         first_snap = None
@@ -268,10 +280,14 @@ async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    initial = first_snap["total_usdc"] if first_snap else 10_000.0
+    # En live, le capital initial canonique est LIVE_INITIAL_USDC (fallback snapshot filtre).
+    if MODE == "live" and LIVE_INITIAL_USDC > 0:
+        initial = LIVE_INITIAL_USDC
+    else:
+        initial = first_snap["total_usdc"] if first_snap else 10_000.0
     current = snap["total_usdc"]
     pnl_usdc = current - initial
-    pnl_pct  = (pnl_usdc / initial) * 100
+    pnl_pct  = (pnl_usdc / initial) * 100 if initial else 0.0
     emoji    = "📈" if pnl_usdc >= 0 else "📉"
 
     # Essayer d'obtenir le prix live pour valoriser les positions
@@ -282,7 +298,7 @@ async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         pass
 
     lines = [
-        f"{emoji} *P&L Paper Trading*",
+        f"{emoji} *P&L {'Live' if MODE == 'live' else 'Paper'} Trading*",
         f"Capital initial : `{initial:,.2f} USDC`",
         f"Capital actuel  : `{current:,.2f} USDC`",
         f"P&L absolu      : `{pnl_usdc:+,.2f} USDC`",

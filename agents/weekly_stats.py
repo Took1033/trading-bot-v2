@@ -29,6 +29,11 @@ load_dotenv()
 log = structlog.get_logger()
 
 DB_PATH      = os.getenv("DB_PATH", "memory/trading.db")
+MODE         = os.getenv("COINBASE_MODE", "paper")
+# Seuil paper/live : les snapshots paper tournent autour de 10000, les live
+# autour de LIVE_INITIAL_USDC (~220). En live on exclut les snapshots >= seuil
+# (residus paper) qui faussent P&L/drawdown. Meme logique que le dashboard.
+PAPER_LIVE_SPLIT = float(os.getenv("PAPER_LIVE_SPLIT_USDC", "1000"))
 WEEKLY_DOW   = int(os.getenv("WEEKLY_STATS_DOW_UTC",  "0"))    # 0=Lundi
 WEEKLY_HOUR  = int(os.getenv("WEEKLY_STATS_HOUR_UTC", "9"))
 WEEKLY_MIN   = int(os.getenv("WEEKLY_STATS_MIN_UTC",  "5"))    # +5min apres daily
@@ -105,12 +110,20 @@ def _compute_7d_metrics() -> dict:
             (since,),
         ).fetchall()
 
-        # Snapshots pour drawdown et Sharpe
-        snapshots = conn.execute(
-            "SELECT total_usdc, timestamp FROM portfolio_snapshots "
-            "WHERE timestamp >= ? ORDER BY timestamp",
-            (since,),
-        ).fetchall()
+        # Snapshots pour drawdown et Sharpe.
+        # En live, exclut les residus paper (~10000) qui polluent P&L/drawdown.
+        if MODE == "live":
+            snapshots = conn.execute(
+                "SELECT total_usdc, timestamp FROM portfolio_snapshots "
+                "WHERE timestamp >= ? AND total_usdc < ? ORDER BY timestamp",
+                (since, PAPER_LIVE_SPLIT),
+            ).fetchall()
+        else:
+            snapshots = conn.execute(
+                "SELECT total_usdc, timestamp FROM portfolio_snapshots "
+                "WHERE timestamp >= ? ORDER BY timestamp",
+                (since,),
+            ).fetchall()
 
     # Win rate : on apparie BUY → SELL par symbole (FIFO simple)
     open_positions: dict[str, list[dict]] = {}   # symbol -> stack de BUYs

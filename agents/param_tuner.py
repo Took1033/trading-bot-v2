@@ -27,6 +27,9 @@ load_dotenv()
 log = structlog.get_logger()
 
 DB_PATH       = os.getenv("DB_PATH", "memory/trading.db")
+MODE          = os.getenv("COINBASE_MODE", "paper")
+# En live, exclut les residus paper (~10000) du calcul P&L 30j (cf. dashboard).
+PAPER_LIVE_SPLIT = float(os.getenv("PAPER_LIVE_SPLIT_USDC", "1000"))
 PROPOSALS_DIR = Path(DB_PATH).parent / "tuning_proposals"
 TUNE_DOW      = int(os.getenv("PARAM_TUNE_DOW_UTC",  "6"))   # Dimanche
 TUNE_HOUR     = int(os.getenv("PARAM_TUNE_HOUR_UTC", "21"))
@@ -93,11 +96,18 @@ def _collect_30d_data() -> dict:
             (since,),
         ).fetchone()[0]
 
-        snapshots = conn.execute(
-            "SELECT total_usdc, timestamp FROM portfolio_snapshots "
-            "WHERE timestamp >= ? ORDER BY timestamp",
-            (since,),
-        ).fetchall()
+        if MODE == "live":
+            snapshots = conn.execute(
+                "SELECT total_usdc, timestamp FROM portfolio_snapshots "
+                "WHERE timestamp >= ? AND total_usdc < ? ORDER BY timestamp",
+                (since, PAPER_LIVE_SPLIT),
+            ).fetchall()
+        else:
+            snapshots = conn.execute(
+                "SELECT total_usdc, timestamp FROM portfolio_snapshots "
+                "WHERE timestamp >= ? ORDER BY timestamp",
+                (since,),
+            ).fetchall()
 
     # Apparier BUY/SELL pour PnL par trade
     trades: list[dict] = []
