@@ -155,18 +155,51 @@ async def run_symbol(symbol: str, days: int, granularity: int) -> None:
               f"{g['trades']:>8}{g['win']:>6.0f}%{g['maxdd']:>7.0f}%{flag}")
 
 
+async def run_sweep(symbol: str, days: int, granularity: int) -> None:
+    """Robustesse : Trend-MA long sur plusieurs periodes de MA (anti curve-fitting)."""
+    try:
+        prices = await fetch_closes(symbol, granularity, days)
+    except Exception as exc:
+        print(f"  {symbol}: fetch KO ({exc})"); return
+    if len(prices) < 220:
+        print(f"  {symbol}: pas assez de prix ({len(prices)})"); return
+
+    p_arr = np.asarray(prices, dtype=float)
+    print(f"\n  {symbol}  ({len(prices)} pts) — Trend-MA long, net maker {MAKER_FEE_SIDE:.1%}/cote")
+    print(f"  {'periode MA':<12}{'GROSS%':>9}{'net maker%':>12}{'trades':>8}{'win%':>7}{'maxDD%':>8}")
+    print("  " + "-" * 56)
+    pos_count = 0
+    for n in (20, 30, 50, 80, 100, 150, 200):
+        pos = pos_trend_long(p_arr, slow=n)
+        g = simulate(prices, pos, 0.0)
+        m = simulate(prices, pos, MAKER_FEE_SIDE)
+        if m["ret_pct"] > 0:
+            pos_count += 1
+        flag = "  +" if m["ret_pct"] > 0 else ""
+        print(f"  SMA{n:<9}{g['ret_pct']:>8.1f}%{m['ret_pct']:>11.1f}%"
+              f"{m['trades']:>8}{m['win']:>6.0f}%{m['maxdd']:>7.0f}%{flag}")
+    print(f"  -> {pos_count}/7 periodes net-positives "
+          f"({'ROBUSTE' if pos_count >= 5 else 'fragile' if pos_count >= 3 else 'PAS robuste'})")
+
+
 async def main() -> int:
-    symbols = [sys.argv[1]] if len(sys.argv) > 1 else DEFAULT_SYMBOLS
-    days = int(sys.argv[2]) if len(sys.argv) > 2 else 720
-    gran = GRAN.get(sys.argv[3] if len(sys.argv) > 3 else "daily", 86400)
+    args = sys.argv[1:]
+    sweep = args and args[0] == "sweep"
+    if sweep:
+        args = args[1:]
+    symbols = [args[0]] if args else DEFAULT_SYMBOLS
+    days = int(args[1]) if len(args) > 1 else 720
+    gran_name = args[2] if len(args) > 2 else "daily"
+    gran = GRAN.get(gran_name, 86400)
 
     print("=" * 70)
-    print(f"  RECHERCHE D'EDGE — {days}j {sys.argv[3] if len(sys.argv) > 3 else 'daily'}"
-          f" — frais maker {MAKER_FEE_SIDE:.2%}/cote")
-    print("  Colonne GROSS = edge avant frais. Si <= Buy&Hold partout : pas d'edge.")
+    title = "ROBUSTESSE Trend-MA long (sweep periodes)" if sweep else "RECHERCHE D'EDGE"
+    print(f"  {title} — {days}j {gran_name} — frais maker {MAKER_FEE_SIDE:.2%}/cote")
+    if not sweep:
+        print("  Colonne GROSS = edge avant frais. Si <= Buy&Hold partout : pas d'edge.")
     print("=" * 70)
     for sym in symbols:
-        await run_symbol(sym, days, gran)
+        await (run_sweep(sym, days, gran) if sweep else run_symbol(sym, days, gran))
     print()
     return 0
 
