@@ -1,28 +1,24 @@
 {
   "bots": [
     {
-      "bot_id": "btc",
+      "bot_id": "trend_btc",
       "symbol": "BTC-USDC",
-      "weight": 0.35,
-      "name": "Bitcoin"
+      "weight": 0.05,
+      "name": "Trend BTC",
+      "type": "trend"
     },
     {
-      "bot_id": "eth",
+      "bot_id": "trend_eth",
       "symbol": "ETH-USDC",
-      "weight": 0.3,
-      "name": "Ethereum"
+      "weight": 0.05,
+      "name": "Trend ETH",
+      "type": "trend"
     },
     {
       "bot_id": "sol",
       "symbol": "SOL-USDC",
       "weight": 0.2,
       "name": "Solana"
-    },
-    {
-      "bot_id": "dynamique",
-      "symbol": "ETH-USDC",
-      "weight": 0.15,
-      "name": "Dynamique"
     },
     {
       "bot_id": "ada",

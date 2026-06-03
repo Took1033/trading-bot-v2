@@ -67,15 +67,18 @@ def save_bots_config(bots: list[dict]) -> None:
     """Écrit la config des bots dans config/bots.json (écriture atomique)."""
     try:
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"bots": [
-            {
+        entries = []
+        for b in bots:
+            e = {
                 "bot_id": b["bot_id"],
                 "symbol": b["symbol"],
                 "weight": round(float(b.get("weight", 0.0)), 4),
                 "name":   b.get("name", b["bot_id"].upper()),
             }
-            for b in bots
-        ]}
+            if b.get("type"):          # preserve le type (ex: "trend") sinon le
+                e["type"] = b["type"]  # bot redeviendrait un scalpeur au reload
+            entries.append(e)
+        payload = {"bots": entries}
         tmp = CONFIG_PATH.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         tmp.replace(CONFIG_PATH)
