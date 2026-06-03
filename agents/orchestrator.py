@@ -40,9 +40,10 @@ TRAILING_ACTIVATE   = float(os.getenv("RISK_TRAILING_ACTIVATE",  "0.02"))  # act
 SIGNAL_CONFIRM      = int(os.getenv("SIGNAL_CONFIRM_TICKS",      "2"))     # ticks de confirmation
 TRADE_COOLDOWN_S    = int(os.getenv("TRADE_COOLDOWN_S",          "300"))   # 5 min entre trades
 
-# Frais Coinbase Advanced Trade : 0.60% taker (market orders IOC)
-# Round-trip = 2 × taker = 1.20%. P&L net = P&L brut - 1.20%
-COINBASE_TAKER_FEE_PCT = float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.006"))
+# Frais Coinbase Advanced Trade : taker sur market orders IOC (depend du palier
+# de volume). Round-trip = 2 × taker. P&L net = P&L brut - round-trip.
+# Valeur reelle pilotee par .env (COINBASE_TAKER_FEE_PCT) ; defaut = palier 0.75%.
+COINBASE_TAKER_FEE_PCT = float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.0075"))
 ROUND_TRIP_FEE_PCT     = COINBASE_TAKER_FEE_PCT * 2
 
 # ATR-based SL/TP : si actif, on remplace les valeurs fixes par des multiples d'ATR
@@ -663,7 +664,7 @@ class Orchestrator:
             await self._notify(
                 f"✅ *Ordre executé* — `{self.symbol}`\n"
                 f"`{signal['action'].upper()}` `{qty:.6f}` {base} @ `{price:,.2f}` USDC\n"
-                f"Montant : `{cost:,.2f}` USDC | Frais ~`{fee_cost_usdc:.3f}` USDC (1.20%)\n"
+                f"Montant : `{cost:,.2f}` USDC | Frais ~`{fee_cost_usdc:.3f}` USDC ({ROUND_TRIP_FEE_PCT:.2%})\n"
                 f"SL{sltp_tag} : `{sl_price:,.2f}` ({sl_net_pct:+.1%} net)\n"
                 f"TP{sltp_tag} : `{tp_price:,.2f}` ({tp_net_pct:+.1%} net)"
             )

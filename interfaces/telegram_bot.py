@@ -43,7 +43,7 @@ MODE    = os.getenv("COINBASE_MODE", "paper")
 LIVE_INITIAL_USDC = float(os.getenv("LIVE_INITIAL_USDC", "0") or "0")
 PAPER_LIVE_SPLIT  = float(os.getenv("PAPER_LIVE_SPLIT_USDC", "1000"))
 # Frais round-trip Coinbase (taker x2) — P&L affiche net de frais.
-ROUND_TRIP_FEE_PCT = 2 * float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.006"))
+ROUND_TRIP_FEE_PCT = 2 * float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.0075"))
 _CONFIG = Path(DB_PATH).parent / "telegram_config.json"
 
 

@@ -44,7 +44,7 @@ PAPER_LIVE_SPLIT = float(os.getenv("PAPER_LIVE_SPLIT_USDC", "1000"))
 
 # Frais round-trip Coinbase (taker x2). Soustrait du P&L par bot pour afficher
 # le net reel si la position etait liquidee maintenant.
-ROUND_TRIP_FEE_PCT = 2 * float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.006"))
+ROUND_TRIP_FEE_PCT = 2 * float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.0075"))
 
 
 def _db() -> sqlite3.Connection:
