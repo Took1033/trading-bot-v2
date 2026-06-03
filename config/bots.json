@@ -43,12 +43,6 @@
       "name": "ZEC"
     },
     {
-      "bot_id": "xlm",
-      "symbol": "XLM-USDC",
-      "weight": 0.1,
-      "name": "XLM"
-    },
-    {
       "bot_id": "doge",
       "symbol": "DOGE-USDC",
       "weight": 0.1,
@@ -59,12 +53,6 @@
       "symbol": "AVAX-USDC",
       "weight": 0.1,
       "name": "Avalanche"
-    },
-    {
-      "bot_id": "sui",
-      "symbol": "AVAX-USDC",
-      "weight": 0.1,
-      "name": "Sui"
     },
     {
       "bot_id": "near",
