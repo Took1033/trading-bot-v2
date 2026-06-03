@@ -198,18 +198,25 @@ async def run_walk(symbol: str, days: int, granularity: int, slow: int = 50, win
     print(f"  {'fenetre':<10}{'buy&hold%':>11}{'net maker%':>12}{'trades':>8}{'win%':>7}{'maxDD%':>8}")
     print("  " + "-" * 56)
     pos_count = 0
+    comp_strat = 1.0     # rendement composé trend-long sur toutes les fenetres
+    comp_bh    = 1.0     # rendement composé buy & hold
     for k in range(nwin):
         seg = prices[k * window:(k + 1) * window]
         pos = pos_trend_long(np.asarray(seg, dtype=float), slow)
         m = simulate(seg, pos, MAKER_FEE_SIDE)
         bh = (seg[-1] / seg[0] - 1) * 100
+        comp_strat *= (1 + m["ret_pct"] / 100)
+        comp_bh    *= (1 + bh / 100)
         if m["ret_pct"] > 0:
             pos_count += 1
         flag = "  +" if m["ret_pct"] > 0 else ""
         print(f"  #{k+1:<8}{bh:>10.1f}%{m['ret_pct']:>11.1f}%"
               f"{m['trades']:>8}{m['win']:>6.0f}%{m['maxdd']:>7.0f}%{flag}")
-    verdict = "DURABLE" if pos_count >= nwin - 1 else "regime-dependant" if pos_count >= nwin // 2 else "NON durable"
-    print(f"  -> {pos_count}/{nwin} fenetres net-positives ({verdict})")
+    cs, cb = (comp_strat - 1) * 100, (comp_bh - 1) * 100
+    # Pour du trend-following, le COMPOSE prime sur le nb de fenetres +
+    # (peu de grosses annees portent l'ensemble).
+    print(f"  -> {pos_count}/{nwin} fenetres +  |  COMPOSE trend-long {cs:+.0f}% "
+          f"vs buy&hold {cb:+.0f}%  ({'TREND GAGNE' if cs > cb else 'buy&hold gagne'})")
 
 
 async def main() -> int:
