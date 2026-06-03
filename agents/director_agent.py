@@ -53,6 +53,7 @@ class DirectorAgent:
         self._initial_value  : float | None = None
         self._peak_value     : float | None = None
         self._kill_switch_at : float = 0.0           # timestamp d'activation
+        self._kill_is_fg     : bool  = False         # pause causee par Fear & Greed ?
         self._daily_stop_at  : float = 0.0           # timestamp arret journalier
 
         # Snapshots horaires pour calcul de perte horaire (60 min)
@@ -156,6 +157,7 @@ class DirectorAgent:
                 await self._trigger_kill_switch(
                     f"Extreme Fear (Fear & Greed = {fg}/100 — {self._fg_label})",
                     now,
+                    cause_fg=True,
                 )
                 return
             elif fg >= 80:
@@ -220,9 +222,11 @@ class DirectorAgent:
             return 0.0
         return max(0.0, (ref - current) / ref)
 
-    async def _trigger_kill_switch(self, reason: str, now: float) -> None:
+    async def _trigger_kill_switch(self, reason: str, now: float,
+                                   cause_fg: bool = False) -> None:
         """Active le kill switch global avec notification."""
         self._kill_switch_at = now
+        self._kill_is_fg     = cause_fg
         trading_state.kill_switch(reason)
 
         log.error("kill_switch_triggered", reason=reason)
@@ -238,14 +242,28 @@ class DirectorAgent:
         if self._kill_switch_at == 0:
             return
         elapsed_min = (now - self._kill_switch_at) / 60
-        if elapsed_min >= RESUME_AFTER_MIN:
-            trading_state.release_kill_switch()
-            self._kill_switch_at = 0
-            # Reset du peak pour eviter de re-trigger immediatement
-            self._peak_value = await self.swarm.get_portfolio_total()
+        if elapsed_min < RESUME_AFTER_MIN:
+            return
 
-            log.info("kill_switch_released", elapsed_min=round(elapsed_min, 1))
-            await notifier.notify(
-                f"✅ *Kill switch leve* apres `{int(elapsed_min)} min`\n"
-                f"Trading repris automatiquement."
-            )
+        # Pause causee par le Fear & Greed : ne lever que si le marche est sorti
+        # de l'Extreme Fear. Sinon prolonger silencieusement (evite le thrash
+        # KILL/release horaire + le spam Telegram en regime de peur prolonge).
+        if self._kill_is_fg:
+            fg = await self._fetch_fear_greed()
+            if fg is not None and fg < FG_EXTREME_FEAR:
+                self._kill_switch_at = now   # prolonge sans notification
+                log.info("kill_switch_fg_hold", fg=fg,
+                         elapsed_min=round(elapsed_min, 1))
+                return
+
+        trading_state.release_kill_switch()
+        self._kill_switch_at = 0
+        self._kill_is_fg     = False
+        # Reset du peak pour eviter de re-trigger immediatement
+        self._peak_value = await self.swarm.get_portfolio_total()
+
+        log.info("kill_switch_released", elapsed_min=round(elapsed_min, 1))
+        await notifier.notify(
+            f"✅ *Kill switch leve* apres `{int(elapsed_min)} min`\n"
+            f"Trading repris automatiquement."
+        )
