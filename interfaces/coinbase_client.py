@@ -271,9 +271,15 @@ class CoinbaseClient:
         symbol: str,
         side:   Literal["buy", "sell"],
         qty:    float,
+        force:  bool = False,
     ) -> Order:
+        """
+        Place un ordre. `force=True` pour les sorties de protection (stop-loss,
+        trailing, take-profit) : le garde anti-spread ne bloque PAS l'execution,
+        car proteger la position prime sur l'illiquidite ponctuelle.
+        """
         if self.mode == "live":
-            return await self._live_order(symbol, side, qty)
+            return await self._live_order(symbol, side, qty, force=force)
         return await self._paper_order(symbol, side, qty)
 
     async def _paper_order(self, symbol: str, side: Literal["buy", "sell"], qty: float) -> Order:
@@ -306,9 +312,12 @@ class CoinbaseClient:
                  qty=round(qty, 6), price=round(price, 2))
         return order
 
-    async def _live_order(self, symbol: str, side: Literal["buy", "sell"], qty: float) -> Order:
+    async def _live_order(self, symbol: str, side: Literal["buy", "sell"], qty: float,
+                          force: bool = False) -> Order:
         """Place un ordre market reel via Coinbase Advanced Trade API."""
         # ── Order book check : refus si spread trop large (marche illiquide) ──
+        # `force=True` (stop-loss/trailing/TP) : on n'annule jamais une sortie de
+        # protection a cause du spread, on logue seulement un avertissement.
         try:
             bb = await self._run_sync(self._real_client.get_best_bid_ask, product_ids=[symbol])
             pb = bb.pricebooks[0]
@@ -317,10 +326,13 @@ class CoinbaseClient:
             mid = (bid + ask) / 2
             spread_pct = (ask - bid) / mid * 100 if mid > 0 else 0
             if spread_pct > MAX_SPREAD_PCT:
-                raise ValueError(
-                    f"Spread trop large : {spread_pct:.3f}% > max {MAX_SPREAD_PCT}% "
-                    f"(bid={bid:.2f}, ask={ask:.2f})"
-                )
+                if not force:
+                    raise ValueError(
+                        f"Spread trop large : {spread_pct:.3f}% > max {MAX_SPREAD_PCT}% "
+                        f"(bid={bid:.2f}, ask={ask:.2f})"
+                    )
+                log.warning("forced_sell_wide_spread", symbol=symbol,
+                            spread_pct=round(spread_pct, 3), bid=bid, ask=ask)
             price = mid
         except ValueError:
             raise

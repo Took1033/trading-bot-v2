@@ -265,7 +265,7 @@ class Orchestrator:
             # Lire avg_price AVANT place_order (qui supprime la position en live)
             pos_before = self._coinbase.get_position(self.symbol)
             avg_price  = pos_before["avg_price"] if pos_before else price
-            order = await self._coinbase.place_order(self.symbol, "sell", qty)
+            order = await self._coinbase.place_order(self.symbol, "sell", qty, force=True)
             pnl   = qty * (price - avg_price)
             pnl_pct = ((price - avg_price) / avg_price * 100) if avg_price > 0 else 0.0
 
