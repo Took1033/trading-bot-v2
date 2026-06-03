@@ -89,3 +89,19 @@ def configure_logging() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("telegram").setLevel(logging.WARNING)
+    # werkzeug = access-logs du dashboard (heure LOCALE + bruit). On les coupe :
+    # tous les timestamps des logs restent ainsi uniformement en UTC.
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
+    # Repere d'horloge : tous les logs sont en UTC (suffixe Z). On affiche au
+    # demarrage la correspondance UTC <-> heure locale pour ne pas s'y perdre.
+    from datetime import datetime, timezone
+    _now_utc   = datetime.now(timezone.utc)
+    _now_local = _now_utc.astimezone()
+    structlog.get_logger().info(
+        "clock_reference",
+        utc=_now_utc.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        local=_now_local.strftime("%Y-%m-%d %H:%M:%S"),
+        utc_offset=_now_local.strftime("%z"),
+        note="tous les logs ci-dessous sont en UTC",
+    )
