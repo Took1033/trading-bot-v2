@@ -142,11 +142,12 @@ async def run_symbol(symbol: str, days: int, granularity: int) -> None:
     if len(prices) < 80:
         print(f"  {symbol}: pas assez de prix ({len(prices)})"); return
 
+    p_arr = np.asarray(prices, dtype=float)
     print(f"\n  {symbol}  ({len(prices)} pts)")
     print(f"  {'strategie':<17}{'GROSS%':>9}{'net maker%':>12}{'trades':>8}{'win%':>7}{'maxDD%':>8}")
     print("  " + "-" * 61)
     for name, fn in STRATS.items():
-        pos = fn(prices)
+        pos = fn(p_arr)
         g = simulate(prices, pos, 0.0)            # BRUT (sans frais)
         n = simulate(prices, pos, MAKER_FEE_SIDE)  # net maker
         flag = "  <-- edge brut +" if (name != "Buy&Hold" and g["ret_pct"] > 0) else ""
