@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 from agents.dynamic_bot  import DynamicBot
 from agents.memory_agent import MemoryAgent
 from agents.orchestrator import Orchestrator
+from agents.trend_bot    import TrendBot
 from interfaces.coinbase_client import CoinbaseClient
 from bot_config import load_bots_config, save_bots_config, symbol_exists, validate_symbol_format
 
@@ -66,8 +67,17 @@ class BotSwarm:
     # ─────────────────────────────────────────────────────────────────────────
 
     def _make_bot(self, cfg: dict):
-        """Instancie un bot (Orchestrator ou DynamicBot) depuis une config dict."""
-        if cfg["bot_id"] == "dynamique":
+        """Instancie un bot (Orchestrator / DynamicBot / TrendBot) depuis une config dict."""
+        if cfg.get("type") == "trend":
+            bot = TrendBot(
+                symbol   = cfg["symbol"],
+                bot_id   = cfg["bot_id"],
+                weight   = cfg.get("weight", 0.1),
+                coinbase = self._coinbase,
+                memory   = self._memory,
+            )
+            bot.display_name = cfg.get("name", bot.display_name)
+        elif cfg["bot_id"] == "dynamique":
             bot = DynamicBot(
                 coinbase = self._coinbase,
                 memory   = self._memory,
@@ -90,15 +100,18 @@ class BotSwarm:
 
     def _current_config(self) -> list[dict]:
         """Reconstruit la config courante (pour persistance)."""
-        return [
-            {
+        out = []
+        for b in self.bots:
+            entry = {
                 "bot_id": b.bot_id,
                 "symbol": b.symbol,
                 "weight": b.weight,
                 "name":   getattr(b, "display_name", b.bot_id.upper()),
             }
-            for b in self.bots
-        ]
+            if isinstance(b, TrendBot):
+                entry["type"] = "trend"
+            out.append(entry)
+        return out
 
     def _persist(self) -> None:
         """P3 : sauvegarde la config courante sur disque."""
