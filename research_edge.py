@@ -182,24 +182,62 @@ async def run_sweep(symbol: str, days: int, granularity: int) -> None:
           f"({'ROBUSTE' if pos_count >= 5 else 'fragile' if pos_count >= 3 else 'PAS robuste'})")
 
 
+async def run_walk(symbol: str, days: int, granularity: int, slow: int = 50, window: int = 365) -> None:
+    """Out-of-sample : decoupe l'historique en fenetres et teste Trend-MA long sur chacune.
+    Repond a 'l'edge tient-il sur d'autres regimes que la fenetre recente ?'."""
+    try:
+        prices = await fetch_closes(symbol, granularity, days)
+    except Exception as exc:
+        print(f"  {symbol}: fetch KO ({exc})"); return
+    if len(prices) < window + slow:
+        print(f"  {symbol}: pas assez de prix ({len(prices)}, besoin {window + slow})"); return
+
+    nwin = len(prices) // window
+    print(f"\n  {symbol}  ({len(prices)} pts) — Trend-MA long SMA{slow}, "
+          f"{nwin} fenetres de {window} pts, net maker {MAKER_FEE_SIDE:.1%}/cote")
+    print(f"  {'fenetre':<10}{'buy&hold%':>11}{'net maker%':>12}{'trades':>8}{'win%':>7}{'maxDD%':>8}")
+    print("  " + "-" * 56)
+    pos_count = 0
+    for k in range(nwin):
+        seg = prices[k * window:(k + 1) * window]
+        pos = pos_trend_long(np.asarray(seg, dtype=float), slow)
+        m = simulate(seg, pos, MAKER_FEE_SIDE)
+        bh = (seg[-1] / seg[0] - 1) * 100
+        if m["ret_pct"] > 0:
+            pos_count += 1
+        flag = "  +" if m["ret_pct"] > 0 else ""
+        print(f"  #{k+1:<8}{bh:>10.1f}%{m['ret_pct']:>11.1f}%"
+              f"{m['trades']:>8}{m['win']:>6.0f}%{m['maxdd']:>7.0f}%{flag}")
+    verdict = "DURABLE" if pos_count >= nwin - 1 else "regime-dependant" if pos_count >= nwin // 2 else "NON durable"
+    print(f"  -> {pos_count}/{nwin} fenetres net-positives ({verdict})")
+
+
 async def main() -> int:
     args = sys.argv[1:]
     sweep = args and args[0] == "sweep"
-    if sweep:
+    walk = args and args[0] == "walk"
+    if sweep or walk:
         args = args[1:]
     symbols = [args[0]] if args else DEFAULT_SYMBOLS
-    days = int(args[1]) if len(args) > 1 else 720
+    default_days = 1825 if walk else 720
+    days = int(args[1]) if len(args) > 1 else default_days
     gran_name = args[2] if len(args) > 2 else "daily"
     gran = GRAN.get(gran_name, 86400)
 
     print("=" * 70)
-    title = "ROBUSTESSE Trend-MA long (sweep periodes)" if sweep else "RECHERCHE D'EDGE"
+    title = ("OUT-OF-SAMPLE Trend-MA long (fenetres annuelles)" if walk else
+             "ROBUSTESSE Trend-MA long (sweep periodes)" if sweep else "RECHERCHE D'EDGE")
     print(f"  {title} — {days}j {gran_name} — frais maker {MAKER_FEE_SIDE:.2%}/cote")
-    if not sweep:
+    if not (sweep or walk):
         print("  Colonne GROSS = edge avant frais. Si <= Buy&Hold partout : pas d'edge.")
     print("=" * 70)
     for sym in symbols:
-        await (run_sweep(sym, days, gran) if sweep else run_symbol(sym, days, gran))
+        if walk:
+            await run_walk(sym, days, gran)
+        elif sweep:
+            await run_sweep(sym, days, gran)
+        else:
+            await run_symbol(sym, days, gran)
     print()
     return 0
 
