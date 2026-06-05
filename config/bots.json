@@ -3,64 +3,37 @@
     {
       "bot_id": "trend_btc",
       "symbol": "BTC-USDC",
-      "weight": 0.05,
+      "weight": 0.3,
       "name": "Trend BTC",
       "type": "trend"
     },
     {
       "bot_id": "trend_eth",
       "symbol": "ETH-USDC",
-      "weight": 0.05,
+      "weight": 0.25,
       "name": "Trend ETH",
       "type": "trend"
     },
     {
-      "bot_id": "sol",
+      "bot_id": "trend_sol",
       "symbol": "SOL-USDC",
-      "weight": 0.2,
-      "name": "Solana"
-    },
-    {
-      "bot_id": "ada",
-      "symbol": "ADA-USDC",
       "weight": 0.15,
-      "name": "ADA"
+      "name": "Trend SOL",
+      "type": "trend"
     },
     {
-      "bot_id": "xrp",
-      "symbol": "XRP-USDC",
-      "weight": 0.1,
-      "name": "XRP"
-    },
-    {
-      "bot_id": "zec",
-      "symbol": "ZEC-USDC",
-      "weight": 0.1,
-      "name": "ZEC"
-    },
-    {
-      "bot_id": "doge",
-      "symbol": "DOGE-USDC",
-      "weight": 0.1,
-      "name": "Dogecoin"
-    },
-    {
-      "bot_id": "avax",
-      "symbol": "AVAX-USDC",
-      "weight": 0.1,
-      "name": "Avalanche"
-    },
-    {
-      "bot_id": "near",
-      "symbol": "NEAR-USDC",
-      "weight": 0.1,
-      "name": "NEAR"
-    },
-    {
-      "bot_id": "aave",
+      "bot_id": "trend_aave",
       "symbol": "AAVE-USDC",
-      "weight": 0.1,
-      "name": "AAVE"
+      "weight": 0.15,
+      "name": "Trend AAVE",
+      "type": "trend"
+    },
+    {
+      "bot_id": "trend_near",
+      "symbol": "NEAR-USDC",
+      "weight": 0.15,
+      "name": "Trend NEAR",
+      "type": "trend"
     }
   ]
 }
