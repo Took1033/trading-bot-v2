@@ -15,8 +15,11 @@ $ErrorActionPreference = "Stop"
 $dir    = $PSScriptRoot
 $script = Join-Path $dir "watchdog.py"
 
-# python : PATH d'abord, sinon emplacement connu.
-$py = (Get-Command python -ErrorAction SilentlyContinue).Source
+# Python du VENV en priorite : il a les deps (aiohttp/structlog/dotenv) requises
+# pour ENVOYER les alertes Telegram. Le Python systeme ne les a pas forcement
+# -> le watchdog detecterait les pannes mais ne pourrait pas alerter.
+$py = Join-Path $dir ".venv\Scripts\python.exe"
+if (-not (Test-Path $py)) { $py = (Get-Command python -ErrorAction SilentlyContinue).Source }
 if (-not $py) { $py = "C:\Users\Brice Cuny\AppData\Local\Programs\Python\Python311\python.exe" }
 
 if (-not (Test-Path $script)) { throw "watchdog.py introuvable dans $dir" }
