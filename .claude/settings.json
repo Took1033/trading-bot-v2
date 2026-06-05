@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote -v)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python health_check.py:*)",
+      "Bash(curl -s http://localhost:8080:*)",
+      "Bash(curl -s --max-time 5 http://localhost:8080:*)"
+    ],
+    "ask": [
+      "Edit(.env)",
+      "Write(.env)"
+    ],
+    "deny": [
+      "Bash(taskkill:*)",
+      "Bash(pkill:*)",
+      "PowerShell(taskkill:*)",
+      "PowerShell(Stop-Process:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [".claude/hooks/guard_sensitive.py"],
+            "timeout": 10,
+            "statusMessage": "Garde-fou Kairos (.env / process live)"
+          }
+        ]
+      }
+    ]
+  }
+}
