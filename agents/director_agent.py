@@ -36,6 +36,7 @@ log = structlog.get_logger()
 # ─────────────────────────────────────────────────────────────────────────────
 
 MAX_DRAWDOWN_PCT    = float(os.getenv("KILL_MAX_DRAWDOWN_PCT",  "0.08"))   # 8%
+WARN_DRAWDOWN_PCT   = float(os.getenv("WARN_DRAWDOWN_PCT",      "0.05"))   # alerte soft avant le kill (5%)
 MAX_HOURLY_LOSS_PCT = float(os.getenv("KILL_MAX_HOURLY_LOSS",   "0.03"))   # 3%
 MAX_DAILY_LOSS_PCT  = float(os.getenv("KILL_MAX_DAILY_LOSS",    "0.10"))   # 10%
 RESUME_AFTER_MIN    = int(os.getenv("KILL_RESUME_AFTER_MIN",    "60"))     # 60 min
@@ -55,6 +56,7 @@ class DirectorAgent:
         self._kill_switch_at : float = 0.0           # timestamp d'activation
         self._kill_is_fg     : bool  = False         # pause causee par Fear & Greed ?
         self._daily_stop_at  : float = 0.0           # timestamp arret journalier
+        self._dd_warned      : bool  = False         # alerte drawdown soft deja envoyee ?
 
         # Snapshots horaires pour calcul de perte horaire (60 min)
         self._hourly_window: deque[tuple[float, float]] = deque(maxlen=120)
@@ -167,6 +169,21 @@ class DirectorAgent:
         # ── 1. Drawdown global ───────────────────────────────────────────────
         if self._peak_value and self._peak_value > 0:
             drawdown = (self._peak_value - value) / self._peak_value
+
+            # Alerte "soft" anticipee : une seule fois entre WARN et le kill switch.
+            # Re-armee quand on est nettement remonte (evite le spam au seuil).
+            if WARN_DRAWDOWN_PCT <= drawdown < MAX_DRAWDOWN_PCT and not self._dd_warned:
+                self._dd_warned = True
+                log.warning("drawdown_warning", drawdown=round(drawdown, 4),
+                            peak=round(self._peak_value, 2), value=round(value, 2))
+                await notifier.notify(
+                    f"⚠️ *Alerte drawdown* `{drawdown:.2%}`\n"
+                    f"Sous le pic `{self._peak_value:.2f}` USDC (actuel `{value:.2f}`).\n"
+                    f"Kill switch automatique à `{MAX_DRAWDOWN_PCT:.0%}`."
+                )
+            elif drawdown < WARN_DRAWDOWN_PCT * 0.5 and self._dd_warned:
+                self._dd_warned = False
+
             if drawdown >= MAX_DRAWDOWN_PCT:
                 await self._trigger_kill_switch(
                     f"Drawdown {drawdown:.2%} >= {MAX_DRAWDOWN_PCT:.0%}",

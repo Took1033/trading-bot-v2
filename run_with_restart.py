@@ -33,6 +33,17 @@ def log(msg: str) -> None:
         f.write(line + "\n")
 
 
+def notify_telegram(msg: str) -> None:
+    """Best-effort Telegram — ne doit JAMAIS empecher le restart du bot."""
+    try:
+        import asyncio
+
+        from interfaces import notifier
+        asyncio.run(notifier.notify(msg))
+    except Exception as exc:
+        log(f"Notif Telegram echouee (ignore): {exc}")
+
+
 def main() -> int:
     log("=" * 60)
     log(f"Wrapper auto-restart demarre - cible: {SCRIPT}")
@@ -72,6 +83,11 @@ def main() -> int:
         else:
             backoff = min(backoff * 2, MAX_BACKOFF)
 
+        notify_telegram(
+            f"💥 *Kairos a crashé* (#{n_crashes})\n"
+            f"Code de sortie : `{proc.returncode}` — uptime `{runtime:.0f}s`.\n"
+            f"Relance automatique dans `{backoff}s`."
+        )
         log(f"Relance dans {backoff}s...")
         try:
             time.sleep(backoff)

@@ -14,6 +14,7 @@ from datetime import datetime, time as dt_time, timedelta, timezone
 import structlog
 from dotenv import load_dotenv
 
+from agents import trading_state
 from interfaces import notifier
 
 load_dotenv()
@@ -139,6 +140,28 @@ def _format_summary(metrics: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_system_state() -> str:
+    """Bloc 'heartbeat' : etat live du systeme (kill switch, Fear & Greed, mode).
+
+    Complete le resume P&L pour qu'il serve aussi de preuve de vie et explique
+    POURQUOI le bot est eventuellement a l'arret (kill switch / Extreme Fear).
+    """
+    mode               = os.getenv("COINBASE_MODE", "paper").upper()
+    fg_value, fg_label = trading_state.get_fear_greed()
+    killed             = trading_state.is_kill_switch_active()
+
+    lines = ["", "*État système*"]
+    if killed:
+        reason = trading_state.get_kill_reason() or "—"
+        lines.append(f"  Kill switch : 🔴 *ACTIF* — _{reason}_")
+    else:
+        lines.append("  Kill switch : 🟢 inactif")
+    if fg_value is not None:
+        lines.append(f"  Fear & Greed : `{fg_value}` ({fg_label})")
+    lines.append(f"  Mode : `{mode}`")
+    return "\n".join(lines)
+
+
 async def daily_summary_loop() -> None:
     """
     Boucle infinie : attend l'heure cible, envoie le resume, recommence.
@@ -154,7 +177,7 @@ async def daily_summary_loop() -> None:
             await asyncio.sleep(wait_s)
 
             metrics = _compute_24h_metrics()
-            message = _format_summary(metrics)
+            message = _format_summary(metrics) + "\n" + _format_system_state()
 
             # Enrichissement Claude Haiku : narration en 2 phrases
             try:
