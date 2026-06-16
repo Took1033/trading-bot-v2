@@ -157,6 +157,10 @@ class CoinbaseClient:
         self._real_client = None
         self._session    = None               # session aiohttp persistante
         self._loop       = None               # boucle asyncio courante
+        # Optionnel : resolver(symbol)->prix d'entree connu (ou None). Injecte par
+        # BotSwarm depuis la DB, pour restaurer l'avg_price d'une position
+        # re-adoptee apres reboot au lieu de l'ecraser avec le prix courant.
+        self.entry_price_resolver = None
 
         if self.mode == "live":
             self._init_live()
@@ -650,16 +654,37 @@ class CoinbaseClient:
                         ignored_dust.append((symbol, value_usdc))
                         continue
 
+                    # Prix d'entree : on tente de le restaurer depuis l'historique
+                    # (dernier achat connu en DB) au lieu d'ecraser avec le prix
+                    # courant — sinon le P&L d'une position re-adoptee apres reboot
+                    # est faux. Inconnu (depot hors-bot) -> on garde le prix courant.
+                    entry_price = None
+                    if self.entry_price_resolver is not None:
+                        try:
+                            recovered = self.entry_price_resolver(symbol)
+                            if recovered and float(recovered) > 0:
+                                entry_price = float(recovered)
+                        except Exception as exc:
+                            log.debug("entry_price_resolve_failed", symbol=symbol, error=str(exc))
+
+                    if entry_price is not None:
+                        cost_usdc = qty * entry_price
+                        pnl_usdc  = value_usdc - cost_usdc - ROUND_TRIP_FEE_PCT * cost_usdc
+                        avg_price = entry_price
+                    else:
+                        avg_price = current_price   # entree inconnue : pas de P&L fiable
+                        pnl_usdc  = 0.0
+
                     total_usdc   += value_usdc
                     positions_out[symbol] = {
                         "qty":           qty,
-                        "avg_price":     current_price,  # inconnu, on prend le prix actuel
+                        "avg_price":     avg_price,
                         "current_price": current_price,
-                        "pnl_usdc":      0.0,
+                        "pnl_usdc":      pnl_usdc,
                     }
                     # Enregistre dans le suivi local si pas encore present
                     if symbol not in self._live_port.positions:
-                        self._live_port.set_from_balance(symbol, qty, current_price)
+                        self._live_port.set_from_balance(symbol, qty, avg_price)
                 except Exception:
                     pass
 

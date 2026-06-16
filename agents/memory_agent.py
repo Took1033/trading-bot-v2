@@ -44,9 +44,16 @@ class MemoryAgent:
         confidence: float | None = None,
         reasoning: str = "",
         metadata: str = "{}",
-        mode: str = "paper",
+        mode: str | None = None,
     ) -> str:
-        """Insert une décision et retourne son ID SHA256."""
+        """Insert une décision et retourne son ID SHA256.
+
+        `mode=None` (défaut) ⇒ on lit COINBASE_MODE à l'exécution, pour que les
+        ordres et signaux passés en live ne soient plus enregistrés à tort comme
+        'paper' (audit fiable). Un appelant peut toujours forcer un mode explicite.
+        """
+        if mode is None:
+            mode = os.getenv("COINBASE_MODE", "paper")
         d = new_decision(
             role=role,
             task_type=task_type,
@@ -142,6 +149,28 @@ class MemoryAgent:
             (symbol,),
         ).fetchone()
         return row["action"] if row else None
+
+    def last_entry_price(self, symbol: str) -> float | None:
+        """Prix du dernier ACHAT enregistré pour un symbole (depuis la DB).
+
+        Sert à restaurer l'avg_price après un redémarrage : sans ça, une position
+        ré-adoptée depuis le solde Coinbase est marquée au prix courant et le P&L
+        affiché devient faux. Retourne None si aucun achat connu (ex: dépôt
+        hors-bot) — l'appelant garde alors le prix courant.
+        """
+        row = self._conn.execute(
+            "SELECT metadata FROM decisions "
+            "WHERE symbol=? AND task_type='order' AND action='buy' "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (symbol,),
+        ).fetchone()
+        if not row or not row["metadata"]:
+            return None
+        try:
+            price = json.loads(row["metadata"]).get("price")
+            return float(price) if price is not None and float(price) > 0 else None
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return None
 
     # ──────────────────────────────────────────────────────────────────────────
     # Marqueur "premier trade live" (fichier, hors DB)

@@ -49,6 +49,9 @@ class BotSwarm:
         # Ressources partagees entre tous les bots
         self._coinbase = CoinbaseClient()
         self._memory   = MemoryAgent()
+        # Restaure l'avg_price d'une position re-adoptee apres reboot depuis la DB
+        # (dernier achat connu) au lieu de l'ecraser avec le prix courant.
+        self._coinbase.entry_price_resolver = self._memory.last_entry_price
 
         # Tâches asyncio par bot (pour add/remove à chaud — P2)
         self._tasks: dict[str, asyncio.Task] = {}
@@ -126,6 +129,14 @@ class BotSwarm:
         log.info("bot_swarm_starting", n_bots=len(self.bots),
                  stagger_s=STARTUP_STAGGER_S)
         self._running = True
+        # Réconcilie le suivi local avec les vrais soldes Coinbase AVANT de lancer
+        # les bots : sinon, au 1er tick après reboot, get_position() renvoie None
+        # (mémoire vide) et un TrendBot pourrait re-racheter une position déjà
+        # détenue. No-op en mode paper.
+        try:
+            await self._coinbase.sync_live_positions()
+        except Exception as exc:
+            log.warning("swarm_initial_sync_failed", error=str(exc))
         # Démarrage échelonné : évite le pic de 429 Coinbase quand les N bots
         # warm-up (fetch candles) tous en même temps au boot.
         for i, bot in enumerate(self.bots):
