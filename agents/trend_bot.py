@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 from agents import trading_state
 from agents.market_agent import MarketAgent
 from interfaces import notifier
+from strategies.simple_ma  import Signal
 from strategies.trend_daily import analyze as trend_analyze
 
 load_dotenv()
@@ -32,6 +33,11 @@ log = structlog.get_logger()
 TREND_CHECK_S       = int(os.getenv("TREND_CHECK_S", "300"))         # frequence de check (5 min)
 TREND_POSITION_PCT  = float(os.getenv("TREND_POSITION_PCT", "0.03"))  # % du portefeuille par position
 TREND_MIN_USDC      = float(os.getenv("TREND_MIN_USDC", "5.0"))       # mise mini
+# Trailing-stop optionnel (OFF par defaut). >0 = fraction de recul depuis le pic
+# qui declenche une sortie (ex: 0.10 = sortir si -10% depuis le plus haut atteint
+# depuis l'entree). Verrouille une partie du gain ouvert ; reduit l'edge trend pur
+# (on se fait sortir de certains gros runs). A activer en conscience.
+TREND_TRAIL_PCT     = float(os.getenv("TREND_TRAILING_STOP_PCT", "0") or "0")
 
 
 class TrendBot:
@@ -48,6 +54,7 @@ class TrendBot:
         self._market      = MarketAgent(symbol=symbol)   # pour price_history/warmup/dashboard
         self._last_trade_ts: float = 0.0
         self._signal_streak: dict  = {"action": None, "count": 0}
+        self._peak_price:    float = 0.0   # plus haut depuis l'entree (trailing-stop)
 
         log.info("trend_bot_ready", bot_id=self.bot_id, symbol=symbol,
                  sma_check_s=TREND_CHECK_S, position_pct=TREND_POSITION_PCT)
@@ -93,6 +100,27 @@ class TrendBot:
         pos      = self._coinbase.get_position(self.symbol)
         have_pos = bool(pos and pos.get("qty", 0) > 0)
 
+        # Trailing-stop optionnel (OFF par defaut) : sortie si le prix recule de
+        # TREND_TRAIL_PCT depuis le plus haut atteint depuis l'entree. Verrouille
+        # le gain ouvert sans attendre le retournement de SMA50.
+        if have_pos:
+            self._peak_price = max(self._peak_price, live_price)
+            if TREND_TRAIL_PCT > 0 and self._peak_price > 0:
+                drop = (self._peak_price - live_price) / self._peak_price
+                if drop >= TREND_TRAIL_PCT:
+                    meta = {"peak": round(self._peak_price, 6),
+                            "drop_pct": round(drop * 100, 2),
+                            "trail_pct": round(TREND_TRAIL_PCT * 100, 2)}
+                    trail_sig = Signal(
+                        "sell", 0.95,
+                        f"TRAILING-STOP : -{drop * 100:.1f}% depuis pic "
+                        f"{self._peak_price:.4f} (seuil {TREND_TRAIL_PCT * 100:.0f}%)",
+                        self.symbol, meta)
+                    await self._exit(live_price, pos, trail_sig)
+                    return
+        else:
+            self._peak_price = 0.0
+
         if sig.action == "buy" and not have_pos:
             await self._enter(live_price, sig)
         elif sig.action == "sell" and have_pos:
@@ -123,6 +151,7 @@ class TrendBot:
             return
 
         self._last_trade_ts = time.time()
+        self._peak_price    = price   # amorce le trailing-stop au prix d'entree
         self._memory.record_decision(
             role="trend_bot", task_type="order", symbol=self.symbol, action="buy",
             confidence=sig.confidence, reasoning=f"TREND ENTRY : {sig.reasoning}",

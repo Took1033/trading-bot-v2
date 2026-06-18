@@ -257,6 +257,7 @@ HTML = r"""<!DOCTYPE html>
   .btn-release { background: #1f4a1f; color: #aaffaa; }
   .btn-pause   { background: #3b3a1f; color: #e3c050; }
   .btn-resume  { background: #1f3b2f; color: #50e3a0; }
+  .btn-close   { background: #5a2030; color: #ffb0b0; }
   .btn-small   { background: #1a2333; color: #8b9eb3; padding: 3px 10px;
                  border-radius: 4px; border: 1px solid #2a3142;
                  cursor: pointer; font-size: 11px; font-weight: 500;
@@ -705,6 +706,10 @@ async function refresh() {
       const pauseBtn = b.paused
         ? `<button class="btn btn-resume" onclick="doResume('${b.bot_id}')">▶️ Reprendre</button>`
         : `<button class="btn btn-pause"  onclick="doPause('${b.bot_id}')">⏸ Pause</button>`;
+      // Bouton "Clôturer" : seulement si position ouverte (verrouille le P&L affiché).
+      const closeBtn = hasPos
+        ? `<button class="btn btn-close" onclick="doClose('${b.bot_id}', ${pnlPct != null ? pnlPct.toFixed(2) : 'null'})">✖ Clôturer</button>`
+        : '';
 
       // Contrôles paire/roster (sauf bot dynamique qui choisit auto)
       const isDyn = b.bot_id === 'dynamique';
@@ -732,7 +737,7 @@ async function refresh() {
         ` : ''}
         ${dynInfo}
         <canvas class="sparkline" data-botid="${b.bot_id}" width="260" height="44"></canvas>
-        <div class="bot-actions">${pauseBtn}</div>
+        <div class="bot-actions">${pauseBtn}${closeBtn}</div>
         ${pairCtrl}
       </div>`;
     });
@@ -790,6 +795,22 @@ async function doPause(botId) {
 }
 async function doResume(botId) {
   await fetch('/api/bot/' + botId + '/resume', {method:'POST'});
+  refresh();
+}
+async function doClose(botId, pnlPct) {
+  const pnlTxt = (pnlPct != null && !isNaN(pnlPct))
+    ? ` (P&L actuel ${pnlPct >= 0 ? '+' : ''}${pnlPct}%)` : '';
+  if (!confirm(`Clôturer la position de ${botId.toUpperCase()}${pnlTxt} ?\n\n` +
+               `→ Vente au marché immédiate (capital réel)\n` +
+               `→ Le bot est ensuite mis en PAUSE (pas de rachat).`)) return;
+  const res = await postJson('/api/bot/' + botId + '/close', {});
+  if (res.ok) {
+    const pnl = res.pnl_pct != null ? `${res.pnl_pct >= 0 ? '+' : ''}${res.pnl_pct.toFixed(2)}%` : '—';
+    alert(`✅ Clôturé : ${(res.qty ?? 0).toFixed(6)} ${res.symbol} @ $${(res.price ?? 0).toFixed(4)}\n` +
+          `P&L : ${pnl}\nBot mis en pause.`);
+  } else {
+    alert('Clôture refusée : ' + (res.error || 'erreur'));
+  }
   refresh();
 }
 
@@ -1099,6 +1120,7 @@ BOT_HTML = r"""<!DOCTYPE html>
   .btn-resume  { background: #1f4a1f; color: #50e350; }
   .btn-kill    { background: #7a1f1f; color: #ffaaaa; }
   .btn-release { background: #1f4a1f; color: #aaffaa; }
+  .btn-close   { background: #5a2030; color: #ffb0b0; }
   canvas.chart { display: block; width: 100%; height: 120px; }
   .status-badge { display: inline-block; padding: 4px 12px; border-radius: 4px;
                   font-size: 0.85em; font-weight: 700; }
@@ -1129,6 +1151,7 @@ BOT_HTML = r"""<!DOCTYPE html>
   <div class="controls" id="controls">
     <button class="btn btn-pause"   id="btn-pause"   onclick="doPause()">⏸ Mettre en pause</button>
     <button class="btn btn-resume"  id="btn-resume"  onclick="doResume()" style="display:none">▶️ Reprendre</button>
+    <button class="btn btn-close"   id="btn-close"   onclick="doCloseBot()" style="display:none">✖ Clôturer la position</button>
     <button class="btn btn-kill"    id="btn-kill"    onclick="doKillGlobal()">🚨 Kill Switch Global</button>
     <button class="btn btn-release" id="btn-release" onclick="doReleaseGlobal()" style="display:none">✅ Relâcher Kill Switch</button>
   </div>
@@ -1262,6 +1285,8 @@ async function refresh() {
   document.getElementById('btn-resume').style.display  = bot.paused ? 'inline-block' : 'none';
   document.getElementById('btn-kill').style.display    = ks ? 'none' : 'inline-block';
   document.getElementById('btn-release').style.display = ks ? 'inline-block' : 'none';
+  document.getElementById('btn-close').style.display   =
+    (bot.position && bot.position.qty > 0 && !ks) ? 'inline-block' : 'none';
 
   // Position
   const pos = bot.position;
@@ -1328,6 +1353,21 @@ async function doPause()         { await fetch('/api/bot/'+BOT_ID+'/pause',   {m
 async function doResume()        { await fetch('/api/bot/'+BOT_ID+'/resume',  {method:'POST'}); refresh(); }
 async function doKillGlobal()    { if(confirm('Kill Switch global ?')) { await fetch('/api/kill', {method:'POST'}); refresh(); } }
 async function doReleaseGlobal() { await fetch('/api/release', {method:'POST'}); refresh(); }
+async function doCloseBot() {
+  if (!confirm('Clôturer la position de ' + BOT_ID.toUpperCase() + ' ?\n\n' +
+               '→ Vente au marché immédiate (capital réel)\n→ Bot ensuite mis en PAUSE.')) return;
+  try {
+    const r   = await fetch('/api/bot/' + BOT_ID + '/close', {method:'POST'});
+    const res = await r.json();
+    if (res.ok) {
+      const pnl = res.pnl_pct != null ? `${res.pnl_pct>=0?'+':''}${res.pnl_pct.toFixed(2)}%` : '—';
+      alert(`✅ Clôturé : ${(res.qty??0).toFixed(6)} ${res.symbol} @ $${(res.price??0).toFixed(4)}\nP&L : ${pnl}`);
+    } else {
+      alert('Clôture refusée : ' + (res.error || 'erreur'));
+    }
+  } catch (e) { alert('Erreur réseau'); }
+  refresh();
+}
 
 refresh();
 setInterval(refresh, 5000);
@@ -1785,6 +1825,17 @@ async def handle_removebot(request: web.Request) -> web.Response:
     return web.json_response(res, status=200 if res.get("ok") else 400)
 
 
+async def handle_bot_close(request: web.Request) -> web.Response:
+    """POST /api/bot/<id>/close — clôture la position du bot (vente marché) + pause."""
+    swarm = _get_swarm()
+    if not swarm:
+        return web.json_response({"ok": False, "error": "swarm non disponible"}, status=503)
+    bot_id = request.match_info["bot_id"].lower()
+    res = await swarm.force_close(bot_id)
+    log.info("bot_close_via_dashboard", bot_id=bot_id, ok=res.get("ok"))
+    return web.json_response(res, status=200 if res.get("ok") else 400)
+
+
 async def handle_kill(request: web.Request) -> web.Response:
     """POST /api/kill — kill switch global via dashboard."""
     from agents import trading_state
@@ -1825,6 +1876,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/bot/{bot_id}/pause",  handle_bot_pause)
     app.router.add_post("/api/bot/{bot_id}/resume", handle_bot_resume)
     app.router.add_post("/api/bot/{bot_id}/setpair", handle_setpair)
+    app.router.add_post("/api/bot/{bot_id}/close",  handle_bot_close)
     app.router.add_post("/api/bot/{bot_id}/remove", handle_removebot)
     app.router.add_post("/api/bots/add",            handle_addbot)
     app.router.add_post("/api/kill",               handle_kill)

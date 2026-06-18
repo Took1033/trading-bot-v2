@@ -625,20 +625,20 @@ async def cmd_bots(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reason = trading_state.get_kill_reason() or "—"
         lines.append(f"\n🚨 Raison : _{reason}_")
 
-    # Boutons inline : pause/resume rapide + kill switch
-    bot_ids = [b["bot_id"] if "bot_id" in b else b["name"].lower()
-               for b in swarm.get_status()]
+    # Boutons inline : pause/resume + clôture (si position) — une ligne par bot.
     rows: list[list[InlineKeyboardButton]] = []
-    for bid in bot_ids[:4]:
-        paused = trading_state.is_paused(bid)
+    for b in swarm.get_status():
+        bid     = b.get("bot_id") or b["name"].lower()
+        paused  = trading_state.is_paused(bid)
+        has_pos = (b.get("position") or {}).get("qty", 0) > 0
+        row: list[InlineKeyboardButton] = []
         if paused:
-            rows.append([
-                InlineKeyboardButton(f"▶️ Reprendre {bid.upper()}", callback_data=f"resume:{bid}"),
-            ])
+            row.append(InlineKeyboardButton(f"▶️ {bid.upper()}", callback_data=f"resume:{bid}"))
         else:
-            rows.append([
-                InlineKeyboardButton(f"⏸ Pause {bid.upper()}", callback_data=f"pause:{bid}"),
-            ])
+            row.append(InlineKeyboardButton(f"⏸ {bid.upper()}", callback_data=f"pause:{bid}"))
+        if has_pos:
+            row.append(InlineKeyboardButton("✖ Clôturer", callback_data=f"close:{bid}"))
+        rows.append(row)
     if ks_active:
         rows.append([InlineKeyboardButton("🟢 Relâcher KILL", callback_data="release_kill")])
     else:
@@ -697,6 +697,37 @@ async def cmd_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.message.reply_text(f"▶️ Bot `{bid.upper()}` repris.", parse_mode="Markdown")
         return
 
+    if data.startswith("close:"):
+        # Étape 1/2 : ce clic affiche seulement la confirmation (vente réelle).
+        bid = data.split(":", 1)[1]
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"⚠️ Confirmer la clôture de {bid.upper()}",
+                                 callback_data=f"closeok:{bid}")
+        ]])
+        await query.message.reply_text(
+            f"Clôturer la position de `{bid.upper()}` ?\nVente au marché immédiate + pause.",
+            parse_mode="Markdown", reply_markup=kb)
+        return
+
+    if data.startswith("closeok:"):
+        # Étape 2/2 : exécution réelle de la clôture.
+        bid   = data.split(":", 1)[1]
+        swarm = _get_swarm()
+        if not swarm:
+            await query.message.reply_text("⚠️ Swarm non disponible.")
+            return
+        res = await swarm.force_close(bid)
+        if res.get("ok"):
+            emoji = "🟢" if res.get("pnl_pct", 0) >= 0 else "🔴"
+            await query.message.reply_text(
+                f"✅ Clôturé `{res['symbol']}` @ `{res['price']:,.4f}` | "
+                f"P&L {emoji} `{res['pnl_pct']:+.2f}%` — bot en pause.",
+                parse_mode="Markdown")
+        else:
+            await query.message.reply_text(
+                f"❌ {res.get('error', 'erreur')}", parse_mode="Markdown")
+        return
+
 
 async def cmd_kill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Active le kill switch manuellement avec raison optionnelle."""
@@ -736,16 +767,42 @@ _BOT_ALIASES = {
 }
 
 
+def _resolve_bot_id(swarm, target: str) -> str | None:
+    """Résout un identifiant tapé par l'utilisateur vers un vrai bot_id du swarm.
+
+    Accepte : 'all', le bot_id exact (`trend_near`), un alias court (`near`, `btc`),
+    ou le nom de l'actif. Robuste au renommage scalper -> `trend_*` (les anciens
+    alias `_BOT_ALIASES` pointaient sur des bot_id qui n'existent plus). None si
+    introuvable.
+    """
+    t = (target or "").lower().strip()
+    if t == "all":
+        return "all"
+    if not t or not swarm:
+        return None
+    ids = [b.bot_id for b in swarm.bots]
+    if t in ids:                      # bot_id exact
+        return t
+    for cand in (f"trend_{t}", t):    # alias court -> trend_<x>
+        if cand in ids:
+            return cand
+    for b in swarm.bots:              # nom d'actif : near -> NEAR-USDC
+        if b.symbol.split("-")[0].lower() == t:
+            return b.bot_id
+    return None
+
+
 async def cmd_pause_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/pause btc|eth|sol|dyn|all — pause individuelle ou globale."""
     from agents import trading_state
     swarm  = _get_swarm()
     target = (context.args[0].lower() if context.args else "all")
-    bot_id = _BOT_ALIASES.get(target)
+    bot_id = _resolve_bot_id(swarm, target)
 
     if bot_id is None:
         await update.message.reply_text(
-            "Usage : `/pause btc|eth|sol|dyn|all`", parse_mode="Markdown"
+            "Usage : `/pause <bot>` (ex: near, btc, eth, sol, aave) ou `/pause all`",
+            parse_mode="Markdown"
         )
         return
 
@@ -769,11 +826,12 @@ async def _resume_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     from agents import trading_state
     swarm  = _get_swarm()
     target = (context.args[0].lower() if context.args else "all")
-    bot_id = _BOT_ALIASES.get(target)
+    bot_id = _resolve_bot_id(swarm, target)
 
     if bot_id is None:
         await update.message.reply_text(
-            "Usage : `/resume btc|eth|sol|dyn|all`", parse_mode="Markdown"
+            "Usage : `/resume <bot>` (ex: near, btc, eth, sol, aave) ou `/resume all`",
+            parse_mode="Markdown"
         )
         return
 
@@ -790,6 +848,47 @@ async def _resume_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"▶️ Bot `{bot_id}` *repris*.", parse_mode="Markdown"
         )
     log.info("bot_resumed_by_user", target=target, user=update.effective_user.username)
+
+
+async def cmd_close(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/close <bot> — clôture la position d'un bot (vente marché) + pause.
+
+    Verrouille le P&L à l'instant T (le trend-following n'a pas de take-profit).
+    Un seul bot à la fois — pas de `all` (vente réelle).
+    """
+    swarm = _get_swarm()
+    if not swarm:
+        await update.message.reply_text("⚠️ Swarm non disponible.", parse_mode="Markdown")
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Usage : `/close <bot>` (ex: `/close near`).\n"
+            "Vend la position au marché et met le bot en pause.",
+            parse_mode="Markdown")
+        return
+
+    target = context.args[0].lower()
+    bot_id = _resolve_bot_id(swarm, target)
+    if bot_id in (None, "all"):
+        await update.message.reply_text(
+            f"Bot introuvable : `{target}` (un seul bot à la fois, pas de `all`).",
+            parse_mode="Markdown")
+        return
+
+    await update.message.reply_text(f"⏳ Clôture de `{bot_id}`…", parse_mode="Markdown")
+    res = await swarm.force_close(bot_id)
+    if res.get("ok"):
+        emoji = "🟢" if res.get("pnl_pct", 0) >= 0 else "🔴"
+        await update.message.reply_text(
+            f"✅ *Clôturé* `{res['symbol']}`\n"
+            f"Vente `{res['qty']:.6f}` @ `{res['price']:,.4f}` | P&L {emoji} `{res['pnl_pct']:+.2f}%`\n"
+            f"Bot mis en pause — `/resume {target}` pour relancer.",
+            parse_mode="Markdown")
+    else:
+        await update.message.reply_text(
+            f"❌ Clôture refusée : `{res.get('error', 'erreur')}`", parse_mode="Markdown")
+    log.info("bot_closed_by_user", bot_id=bot_id, ok=res.get("ok"),
+             user=update.effective_user.username)
 
 
 async def cmd_tune(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -987,6 +1086,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("kill",     cmd_kill))
     app.add_handler(CommandHandler("release",  cmd_release))
     app.add_handler(CommandHandler("pause",    cmd_pause_bot))
+    app.add_handler(CommandHandler("close",    cmd_close))
     # Configuration des paires / roster (P1/P2)
     app.add_handler(CommandHandler("setpair",   cmd_setpair))
     app.add_handler(CommandHandler("addbot",    cmd_addbot))

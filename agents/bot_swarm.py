@@ -243,6 +243,74 @@ class BotSwarm:
         return {"ok": True, "bot_id": bot_id}
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Clôture manuelle d'une position (bouton "Clôturer" dashboard / Telegram)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def force_close(self, bot_id: str) -> dict:
+        """Vend toute la position d'un bot au marché, puis met le bot en pause.
+
+        Pensé pour verrouiller le P&L affiché à l'instant T (le trend-following n'a
+        pas de take-profit). On met en pause AVANT de vendre pour qu'aucun tick ne
+        re-rentre pendant l'opération, et on LAISSE en pause après (sinon un trend
+        encore haussier rachèterait au cycle suivant). Réversible : reprendre le bot.
+        """
+        from agents import trading_state
+        bot_id = bot_id.lower().strip()
+        bot = self._find_bot(bot_id)
+        if not bot:
+            return {"ok": False, "error": f"bot inconnu : {bot_id}"}
+
+        symbol = bot.symbol
+        pos    = self._coinbase.get_position(symbol)
+        if not pos or pos.get("qty", 0) <= 0:
+            return {"ok": False, "error": f"aucune position ouverte sur {symbol}"}
+
+        # 1) Pause d'abord : empêche un tick de racheter pendant/après la vente.
+        trading_state.pause(bot_id)
+
+        qty       = pos["qty"]
+        avg_price = pos.get("avg_price", 0.0) or 0.0
+        try:
+            order = await self._coinbase.place_order(symbol, "sell", qty, force=True)
+        except Exception as exc:
+            log.error("force_close_failed", bot_id=bot_id, symbol=symbol, error=str(exc))
+            return {"ok": False, "error": f"vente refusée : {exc}",
+                    "paused": True, "symbol": symbol}
+
+        fill_price = getattr(order, "price", 0.0) or avg_price
+        pnl_pct    = ((fill_price - avg_price) / avg_price * 100) if avg_price > 0 else 0.0
+
+        # Trace immuable + snapshot (mode live/paper résolu automatiquement).
+        self._memory.record_decision(
+            role="user", task_type="order", symbol=symbol, action="sell",
+            confidence=1.0,
+            reasoning=f"CLOTURE MANUELLE : {pnl_pct:+.2f}% (vente {qty:.8f} @ {fill_price:.6f})",
+            metadata=(f'{{"order_id":"{getattr(order, "order_id", "")}",'
+                      f'"price":{round(fill_price, 6)},"qty":{round(qty, 8)},"manual":true}}'),
+        )
+        try:
+            self._memory.record_snapshot(await self._coinbase.get_portfolio_snapshot())
+        except Exception as exc:
+            log.debug("force_close_snapshot_failed", error=str(exc))
+
+        # Notification Telegram best-effort (ne doit jamais casser la clôture).
+        try:
+            from interfaces import notifier
+            emoji = "🟢" if pnl_pct >= 0 else "🔴"
+            await notifier.notify(
+                f"✅ *Clôture manuelle* `{symbol}`\n"
+                f"Vente `{qty:.6f}` @ `{fill_price:,.4f}` | P&L {emoji} `{pnl_pct:+.2f}%`\n"
+                f"_Bot_ `{bot_id}` _mis en pause._"
+            )
+        except Exception as exc:
+            log.debug("force_close_notify_failed", error=str(exc))
+
+        log.info("force_close_done", bot_id=bot_id, symbol=symbol,
+                 qty=round(qty, 8), price=round(fill_price, 6), pnl_pct=round(pnl_pct, 2))
+        return {"ok": True, "bot_id": bot_id, "symbol": symbol,
+                "qty": qty, "price": fill_price, "pnl_pct": pnl_pct, "paused": True}
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Accesseurs pour Director / dashboard
     # ─────────────────────────────────────────────────────────────────────────
 
