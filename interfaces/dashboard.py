@@ -112,12 +112,12 @@ HTML = r"""<!DOCTYPE html>
            margin-bottom: 18px; padding-bottom: 14px;
            border-bottom: 1px solid #1f2530; }
   h1 { font-size: 1.4em; color: #f0f0f0; }
-  h1 small { color: #6b7585; font-size: 0.65em; font-weight: 400; margin-left: 8px; }
+  h1 small { color: #6a7789; font-size: 0.65em; font-weight: 400; margin-left: 8px; }
 
   .badge { padding: 4px 10px; border-radius: 4px; font-size: 0.8em; font-weight: 600; }
   .badge.paper  { background: #3b3a1f; color: #e3c050; }
   .badge.live   { background: #5a2020; color: #e88080; }
-  .badge.active { background: #1f3b1f; color: #50e350; }
+  .badge.active { background: #1f3b1f; color: #3fd08a; }
   .badge.kill   { background: #5a1f1f; color: #ff5050; animation: blink 1s infinite; }
   @keyframes blink { 50% { opacity: 0.4; } }
 
@@ -133,9 +133,9 @@ HTML = r"""<!DOCTYPE html>
   .node-cold     { fill: #1f2a3a; }
   .node-label   { fill: #f0f0f0; font-size: 13px; font-weight: 600;
                    text-anchor: middle; pointer-events: none; }
-  .node-sub     { fill: #8b95a7; font-size: 11px; text-anchor: middle; pointer-events: none; }
+  .node-sub     { fill: #98a6ba; font-size: 11px; text-anchor: middle; pointer-events: none; }
   .edge { stroke: #2a3a4a; stroke-width: 1.5; fill: none; }
-  .edge.active { stroke: #50e350; stroke-width: 2; }
+  .edge.active { stroke: #3fd08a; stroke-width: 2; }
   .edge.kill   { stroke: #ff5050; stroke-width: 2; animation: dash 1s linear infinite; }
   @keyframes dash { to { stroke-dashoffset: -20; } }
 
@@ -145,17 +145,17 @@ HTML = r"""<!DOCTYPE html>
               margin-bottom: 18px; }
   .bot-card { background: #131820; border: 1px solid #1f2530;
               border-radius: 8px; padding: 16px; transition: border-color 0.3s; }
-  .bot-card.has-position { border-color: #50e350; }
+  .bot-card.has-position { border-color: #3fd08a; }
   .bot-card.paused { opacity: 0.5; border-color: #5a3a1f; }
   .bot-card h3 { font-size: 1em; color: #e8e8e8; margin-bottom: 4px; }
-  .bot-card .symbol { color: #6b7585; font-size: 0.85em; margin-bottom: 12px; }
+  .bot-card .symbol { color: #6a7789; font-size: 0.85em; margin-bottom: 12px; }
   .bot-stat { display: flex; justify-content: space-between;
               padding: 5px 0; font-size: 0.88em; border-bottom: 1px solid #1f2530; }
   .bot-stat:last-child { border-bottom: 0; }
-  .bot-stat .label { color: #8b95a7; }
+  .bot-stat .label { color: #98a6ba; }
   .bot-stat .value { color: #f0f0f0; font-family: "Consolas", monospace; }
-  .pos-up   { color: #50e350 !important; }
-  .pos-down { color: #e35050 !important; }
+  .pos-up   { color: #3fd08a !important; }
+  .pos-down { color: #ff6d7d !important; }
 
   /* Cartes principales */
   .top-grid { display: grid; gap: 14px;
@@ -163,22 +163,22 @@ HTML = r"""<!DOCTYPE html>
               margin-bottom: 18px; }
   .card { background: #131820; border: 1px solid #1f2530;
           border-radius: 8px; padding: 16px; }
-  .card h2 { font-size: 0.78em; color: #8b95a7; text-transform: uppercase;
+  .card h2 { font-size: 0.78em; color: #98a6ba; text-transform: uppercase;
              letter-spacing: 0.5px; margin-bottom: 10px; }
   .metric { font-size: 1.6em; font-weight: 700; color: #f0f0f0;
             font-family: "Consolas", monospace; }
-  .submetric { font-size: 0.85em; color: #8b95a7; margin-top: 4px; }
+  .submetric { font-size: 0.85em; color: #98a6ba; margin-top: 4px; }
 
   /* Decisions */
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 6px 8px; font-size: 0.85em;
            border-bottom: 1px solid #1f2530; }
-  th { color: #8b95a7; font-weight: 600; font-size: 0.75em; text-transform: uppercase; }
+  th { color: #98a6ba; font-weight: 600; font-size: 0.75em; text-transform: uppercase; }
   td.num { text-align: right; font-family: "Consolas", monospace; }
 
-  footer { text-align: center; margin-top: 20px; font-size: 0.78em; color: #6b7585; }
+  footer { text-align: center; margin-top: 20px; font-size: 0.78em; color: #6a7789; }
   .pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-           background: #50e350; margin-right: 6px; animation: pulse 2s infinite; }
+           background: #3fd08a; margin-right: 6px; animation: pulse 2s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
   /* Sparkline charts */
@@ -190,22 +190,22 @@ HTML = r"""<!DOCTYPE html>
                  margin-bottom: 18px; }
   .signal-diag .card { padding: 14px 16px; }
   .vote-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-  .vote-label { width: 120px; font-size: 0.82em; color: #8b95a7; flex-shrink: 0; }
+  .vote-label { width: 120px; font-size: 0.82em; color: #98a6ba; flex-shrink: 0; }
   .vote-bar-bg { flex: 1; background: #1a2030; border-radius: 3px; height: 10px; overflow: hidden; }
   .vote-bar { height: 10px; border-radius: 3px; transition: width 0.6s ease; min-width: 2px; }
-  .vote-bar.buy  { background: linear-gradient(90deg, #1f5a2a, #50e350); }
-  .vote-bar.sell { background: linear-gradient(90deg, #5a1f1f, #e35050); }
+  .vote-bar.buy  { background: linear-gradient(90deg, #1f5a2a, #3fd08a); }
+  .vote-bar.sell { background: linear-gradient(90deg, #5a1f1f, #ff6d7d); }
   .vote-bar.threshold { background: #f0a030; }
   .vote-score { font-family: "Consolas", monospace; font-size: 0.82em;
                 color: #f0f0f0; width: 36px; text-align: right; flex-shrink: 0; }
-  .voters-list { font-size: 0.78em; color: #50e350; margin-top: 4px; min-height: 16px; }
-  .voters-list.sell { color: #e35050; }
+  .voters-list { font-size: 0.78em; color: #3fd08a; margin-top: 4px; min-height: 16px; }
+  .voters-list.sell { color: #ff6d7d; }
   .diag-threshold { font-size: 0.78em; color: #f0a030; margin-top: 8px;
                     padding-top: 8px; border-top: 1px solid #1f2530; }
   .ind-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 6px; }
   .ind-chip { background: #0d121a; border: 1px solid #1f2530; border-radius: 5px;
               padding: 5px 8px; font-size: 0.78em; }
-  .ind-chip .lbl { color: #6b7585; display: block; font-size: 0.85em; }
+  .ind-chip .lbl { color: #6a7789; display: block; font-size: 0.85em; }
   .ind-chip .val { color: #f0f0f0; font-family: "Consolas", monospace; font-weight: 600; }
   .ind-chip.warn  { border-color: #4a3a1f; }
   .ind-chip.signal-buy  { border-color: #1f4a2a; }
@@ -227,18 +227,18 @@ HTML = r"""<!DOCTYPE html>
   .phase-title { font-size: 0.88em; font-weight: 700; color: #e8e8e8; margin-bottom: 8px;
                  display: flex; align-items: center; gap: 8px; }
   .phase-tag { font-size: 0.7em; padding: 2px 8px; border-radius: 3px; font-weight: 600; }
-  .phase-tag.current { background: #1f4a2a; color: #50e350; }
+  .phase-tag.current { background: #1f4a2a; color: #3fd08a; }
   .phase-tag.done    { background: #1f3a2a; color: #50a350; }
-  .phase-tag.future  { background: #1a2033; color: #6b7585; }
+  .phase-tag.future  { background: #1a2033; color: #6a7789; }
   .phase-item { font-size: 0.8em; padding: 3px 0; display: flex; align-items: flex-start;
-                gap: 6px; color: #8b95a7; }
+                gap: 6px; color: #98a6ba; }
   .phase-item.done { color: #70c070; }
   .phase-item.todo { color: #a0a0b0; }
   .phase-item .chk { flex-shrink: 0; margin-top: 1px; }
 
   /* Tabs */
   .tabs { display: flex; gap: 0; border-bottom: 1px solid #1f2530; margin-bottom: 14px; }
-  .tab { padding: 7px 16px; font-size: 0.82em; font-weight: 600; color: #6b7585;
+  .tab { padding: 7px 16px; font-size: 0.82em; font-weight: 600; color: #6a7789;
          cursor: pointer; border-bottom: 2px solid transparent; transition: color 0.2s;
          user-select: none; }
   .tab:hover { color: #d4d4d4; }
@@ -263,7 +263,7 @@ HTML = r"""<!DOCTYPE html>
   .btn-pause   { background: #3b3a1f; color: #e3c050; }
   .btn-resume  { background: #1f3b2f; color: #50e3a0; }
   .btn-close   { background: #5a2030; color: #ffb0b0; }
-  .btn-small   { background: #1a2333; color: #8b9eb3; padding: 3px 10px;
+  .btn-small   { background: #1a2333; color: #98a6ba; padding: 3px 10px;
                  border-radius: 4px; border: 1px solid #2a3142;
                  cursor: pointer; font-size: 11px; font-weight: 500;
                  margin-left: 4px; }
@@ -397,6 +397,7 @@ HTML = r"""<!DOCTYPE html>
   #params .pp { background:var(--surf2) !important; border-color:var(--bd) !important; }
   #params .pp .ppl { color:var(--txt2) !important; }
   #hero .gtrack { background:var(--surf2) !important; border-color:var(--bd) !important; }
+  #hero .gtrack.fg { background:linear-gradient(90deg,#e5484d,#e8b552 48%,#3fd08a) !important; }
   #hero .gmk { background:var(--txt) !important; box-shadow:0 0 0 2px var(--surf) !important; }
   #hero .hdelta { background:var(--surf2) !important; }
   #params .pp .ppv.warn { color:var(--warn) !important; }
@@ -599,7 +600,7 @@ HTML = r"""<!DOCTYPE html>
       <h2 style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
         <span style="display:flex;align-items:center;gap:8px;">Diagnostic tendance
           <select id="diag-bot" onchange="loadSignalDebug()"
-                  style="background:#0d121a;border:1px solid #2a3142;color:#d4d4d4;border-radius:6px;padding:2px 6px;font-size:12px;"></select>
+                  style="background:var(--surf2);border:1px solid var(--bd);color:var(--txt);border-radius:6px;padding:2px 6px;font-size:12px;"></select>
         </span>
         <span id="no-trade-since" style="font-size:11px;font-weight:400;color:#e3c050;"></span>
       </h2>
@@ -631,7 +632,7 @@ HTML = r"""<!DOCTYPE html>
         <div class="ind-chip"><span class="lbl">Période SMA</span><span class="val" id="ind-period">—</span></div>
         <div class="ind-chip"><span class="lbl">Confiance</span><span class="val" id="ind-conf">—</span></div>
       </div>
-      <div style="font-size:0.75em;color:#6b7585;margin-top:8px;" id="ind-symbol-ts">—</div>
+      <div style="font-size:0.75em;color:#6a7789;margin-top:8px;" id="ind-symbol-ts">—</div>
     </div>
   </div>
 
@@ -639,7 +640,7 @@ HTML = r"""<!DOCTYPE html>
   <div class="card" style="margin-bottom:14px;">
     <h2 style="display:flex;justify-content:space-between;align-items:center;">
       <span>Courbe P&amp;L portfolio</span>
-      <span style="font-size:11px;font-weight:400;color:#6b7585;">
+      <span style="font-size:11px;font-weight:400;color:#6a7789;">
         <button onclick="loadPnlCurve(7)" class="btn-small">7j</button>
         <button onclick="loadPnlCurve(30)" class="btn-small">30j</button>
         <button onclick="loadPnlCurve(90)" class="btn-small">90j</button>
@@ -648,7 +649,7 @@ HTML = r"""<!DOCTYPE html>
     <div style="position:relative; height:280px; padding-top:8px;">
       <canvas id="pnl-chart"></canvas>
     </div>
-    <div style="font-size:12px;color:#8b9eb3;margin-top:6px;text-align:center;" id="pnl-stats">—</div>
+    <div style="font-size:12px;color:#98a6ba;margin-top:6px;text-align:center;" id="pnl-stats">—</div>
   </div>
 
   <!-- Cartes bots détaillées -->
@@ -663,7 +664,7 @@ HTML = r"""<!DOCTYPE html>
       <input type="number" id="new-bot-weight" placeholder="poids" step="0.05" min="0" max="1" value="0.10" />
       <button class="btn btn-resume" onclick="doAddBot()">➕ Ajouter</button>
     </div>
-    <div id="add-bot-msg" style="font-size:0.8em;color:#8b95a7;margin-top:8px;"></div>
+    <div id="add-bot-msg" style="font-size:0.8em;color:#98a6ba;margin-top:8px;"></div>
   </div>
 
   <!-- Onglets : Décisions / Trades / Roadmap -->
@@ -781,7 +782,7 @@ function drawSparkline(canvas, prices) {
     const y = h - 2 - ((p - min) / range) * (h - 6);
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
-  ctx.strokeStyle = up ? '#50e350' : '#e35050';
+  ctx.strokeStyle = up ? '#3fd08a' : '#ff6d7d';
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
@@ -790,7 +791,7 @@ function drawSparkline(canvas, prices) {
   const lastY = h - 2 - ((prices[prices.length-1] - min) / range) * (h - 6);
   ctx.beginPath();
   ctx.arc(lastX - 1, lastY, 3, 0, Math.PI * 2);
-  ctx.fillStyle = up ? '#50e350' : '#e35050';
+  ctx.fillStyle = up ? '#3fd08a' : '#ff6d7d';
   ctx.fill();
 }
 
@@ -917,17 +918,17 @@ async function refresh() {
     document.getElementById('portfolio').textContent = '$' + fmt(p.total);
     const pnlEl = document.getElementById('pnl-total');
     pnlEl.textContent = 'P&L: ' + fmtPct(p.pnl_pct);
-    pnlEl.style.color = p.pnl_pct >= 0 ? '#50e350' : '#e35050';
+    pnlEl.style.color = p.pnl_pct >= 0 ? '#3fd08a' : '#ff6d7d';
 
     const realizedEl = document.getElementById('pnl-realized');
     if (realizedEl && p.pnl_realized != null) {
       realizedEl.textContent = (p.pnl_realized >= 0 ? '+$' : '-$') + fmt(Math.abs(p.pnl_realized));
-      realizedEl.style.color = p.pnl_realized >= 0 ? '#50e350' : '#e35050';
+      realizedEl.style.color = p.pnl_realized >= 0 ? '#3fd08a' : '#ff6d7d';
     }
     const latentEl = document.getElementById('pnl-latent');
     if (latentEl && p.pnl_latent != null) {
       latentEl.textContent = (p.pnl_latent >= 0 ? '+$' : '-$') + fmt(Math.abs(p.pnl_latent));
-      latentEl.style.color = p.pnl_latent >= 0 ? '#50e350' : '#e35050';
+      latentEl.style.color = p.pnl_latent >= 0 ? '#3fd08a' : '#ff6d7d';
     }
     const noteEl = document.getElementById('latent-note');
     if (noteEl && p.excluded && p.excluded.length) {
@@ -964,7 +965,7 @@ async function refresh() {
           .sort((a,b) => b[1]-a[1])
           .map(([s,v]) => `${s.split('-')[0]} ${v>=0?'+':''}${v.toFixed(1)}%`)
           .join(' | ');
-        dynInfo = `<div class="bot-stat"><span class="label">24h</span><span class="value" style="font-size:0.8em;color:#8b95a7;">${perfs}</span></div>`;
+        dynInfo = `<div class="bot-stat"><span class="label">24h</span><span class="value" style="font-size:0.8em;color:#98a6ba;">${perfs}</span></div>`;
       }
 
       const pauseBtn = b.paused
@@ -989,11 +990,11 @@ async function refresh() {
       if (b.autoclose) {
         const ac = b.autoclose;
         const stateTxt = ac.active
-          ? '<span style="color:#50e350;">● ON</span>'
-          : '<span style="color:#6b7585;">○ OFF</span>';
+          ? '<span style="color:#3fd08a;">● ON</span>'
+          : '<span style="color:#6a7789;">○ OFF</span>';
         acCtrl = `
         <div class="pair-ctrl" style="flex-wrap:wrap;">
-          <span style="font-size:11px;color:#8b95a7;width:100%;">Close réglable ${stateTxt}</span>
+          <span style="font-size:11px;color:#98a6ba;width:100%;">Close réglable ${stateTxt}</span>
           <select id="ac-active-${b.bot_id}" class="ac-input">
             <option value="1" ${ac.active ? 'selected' : ''}>Actif</option>
             <option value="0" ${!ac.active ? 'selected' : ''}>Inactif</option>
@@ -1003,14 +1004,14 @@ async function refresh() {
             <option value="take_profit" ${ac.mode === 'take_profit' ? 'selected' : ''}>Take-profit</option>
           </select>
           <input type="number" id="ac-thr-${b.bot_id}" class="ac-input" style="width:52px;" step="0.5" min="0.5" value="${ac.threshold_pct}" />
-          <span style="font-size:11px;color:#8b95a7;">%</span>
+          <span style="font-size:11px;color:#98a6ba;">%</span>
           <button class="btn-small" onclick="doAutoclose('${b.bot_id}')">💾 OK</button>
         </div>`;
       }
 
       grid.innerHTML += `<div class="${cls}">
         <h3>${b.name}
-          <span style="color:#6b7585;font-size:0.75em;">${(b.weight*100).toFixed(0)}%</span>
+          <span style="color:#6a7789;font-size:0.75em;">${(b.weight*100).toFixed(0)}%</span>
           <a class="btn btn-open" href="/bot/${b.bot_id}" target="_blank">🔍 Ouvrir</a>
         </h3>
         <div class="symbol">${b.symbol}</div>
@@ -1041,7 +1042,7 @@ async function refresh() {
   const dec = await fetchJson('/api/decisions');
   const dc = document.getElementById('decisions-container');
   if (!dec || dec.length === 0) {
-    dc.innerHTML = '<div style="padding:14px;text-align:center;color:#6b7585;font-style:italic;">Aucune décision</div>';
+    dc.innerHTML = '<div style="padding:14px;text-align:center;color:#6a7789;font-style:italic;">Aucune décision</div>';
   } else {
     let html = '<table><thead><tr><th>Heure</th><th>Symbole</th><th>Rôle</th><th>Type</th><th>Action</th><th class="num">Conf.</th><th>Raison</th></tr></thead><tbody>';
     dec.forEach(d => {
@@ -1055,7 +1056,7 @@ async function refresh() {
         <td>${d.task_type}</td>
         <td class="${cls}">${action}</td>
         <td class="num">${conf}</td>
-        <td style="color:#8b95a7;font-size:0.85em;">${(d.reasoning || '').substring(0, 50)}</td>
+        <td style="color:#98a6ba;font-size:0.85em;">${(d.reasoning || '').substring(0, 50)}</td>
       </tr>`;
     });
     html += '</tbody></table>';
@@ -1149,7 +1150,7 @@ async function doAddBot() {
   msg.textContent = 'Ajout en cours…';
   const res = await postJson('/api/bots/add', {bot_id, symbol, weight});
   if (res.ok) {
-    msg.style.color = '#50e350';
+    msg.style.color = '#3fd08a';
     msg.textContent = `Bot ${res.bot_id.toUpperCase()} ajouté sur ${res.symbol}.`;
     document.getElementById('new-bot-id').value = '';
     document.getElementById('new-bot-symbol').value = '';
@@ -1187,7 +1188,7 @@ async function loadPnlCurve(days) {
   const pnlPct   = first > 0 ? ((last - first) / first * 100) : 0;
   const maxDd    = Math.max(...drawdowns);
   document.getElementById('pnl-stats').innerHTML =
-    `<span style="color:${pnlPct>=0?'#22c55e':'#ef4444'};">P&L ${days}j: ${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%</span> | ` +
+    `<span style="color:${pnlPct>=0?'#3fd08a':'#ff6d7d'};">P&L ${days}j: ${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%</span> | ` +
     `Min: $${Math.min(...values).toFixed(2)} | Max: $${Math.max(...values).toFixed(2)} | ` +
     `Max drawdown: ${maxDd.toFixed(2)}%`;
 
@@ -1203,7 +1204,7 @@ async function loadPnlCurve(days) {
         {
           label: 'Portfolio (USDC)',
           data: values,
-          borderColor: pnlPct >= 0 ? '#22c55e' : '#ef4444',
+          borderColor: pnlPct >= 0 ? '#3fd08a' : '#ff6d7d',
           backgroundColor: pnlPct >= 0 ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
           tension: 0.3,
           fill: true,
@@ -1220,7 +1221,7 @@ async function loadPnlCurve(days) {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#1a1f2e',
+          backgroundColor: '#151d29',
           borderColor: '#2a3142',
           borderWidth: 1,
           callbacks: {
@@ -1229,9 +1230,9 @@ async function loadPnlCurve(days) {
         },
       },
       scales: {
-        x: { ticks: { color: '#6b7585', maxRotation: 0, autoSkipPadding: 30 },
+        x: { ticks: { color: '#6a7789', maxRotation: 0, autoSkipPadding: 30 },
              grid: { color: 'rgba(255,255,255,0.04)' } },
-        y: { ticks: { color: '#6b7585', callback: v => '$' + v.toFixed(0) },
+        y: { ticks: { color: '#6a7789', callback: v => '$' + v.toFixed(0) },
              grid: { color: 'rgba(255,255,255,0.04)' } },
       },
     },
@@ -1288,8 +1289,8 @@ async function loadSignalDebug() {
 
   // Statut tendance
   const statusEl = document.getElementById('vote-status');
-  if (dist == null) { statusEl.textContent = 'en attente de données'; statusEl.style.color = '#8b95a7'; }
-  else if (isLong)  { statusEl.textContent = '🟢 LONG (tendance haussière)'; statusEl.style.color = '#50e350'; }
+  if (dist == null) { statusEl.textContent = 'en attente de données'; statusEl.style.color = '#98a6ba'; }
+  else if (isLong)  { statusEl.textContent = '🟢 LONG (tendance haussière)'; statusEl.style.color = '#3fd08a'; }
   else              { statusEl.textContent = '⚪ FLAT (sous la SMA' + period + ')'; statusEl.style.color = '#e3c050'; }
 
   // Depuis le dernier trade
@@ -1310,7 +1311,7 @@ async function loadSignalDebug() {
   const distEl = document.getElementById('ind-dist');
   if (distEl) {
     distEl.textContent = dist != null ? (dist >= 0 ? '+' : '') + dist.toFixed(2) + '%' : '—';
-    distEl.style.color = dist == null ? '' : (dist >= 0 ? '#50e350' : '#e35050');
+    distEl.style.color = dist == null ? '' : (dist >= 0 ? '#3fd08a' : '#ff6d7d');
   }
   setChip('ind-state',  dist == null ? '—' : (isLong ? '📈 long' : '⚪ flat'));
   setChip('ind-period', period + ' j');
@@ -1327,7 +1328,7 @@ async function loadTrades() {
   const data = await fetchJson('/api/trades');
   const tc = document.getElementById('trades-container');
   if (!data || data.length === 0) {
-    tc.innerHTML = '<div style="padding:20px;text-align:center;color:#6b7585;font-style:italic;">Aucun trade exécuté pour l\'instant — le bot attend un signal fort (score ≥ seuil).</div>';
+    tc.innerHTML = '<div style="padding:20px;text-align:center;color:#6a7789;font-style:italic;">Aucun trade exécuté pour l\'instant — le bot attend un signal fort (score ≥ seuil).</div>';
     return;
   }
   let html = '<table><thead><tr><th>Heure</th><th>Symbole</th><th>Action</th><th class="num">Conf.</th><th>Détail</th></tr></thead><tbody>';
@@ -1338,7 +1339,7 @@ async function loadTrades() {
       <td><strong>${d.symbol || '—'}</strong></td>
       <td class="${cls}">${d.action}</td>
       <td class="num">${d.confidence != null ? Math.round(d.confidence*100) + '%' : '—'}</td>
-      <td style="color:#8b95a7;font-size:0.85em;">${(d.reasoning||'').substring(0,60)}</td>
+      <td style="color:#98a6ba;font-size:0.85em;">${(d.reasoning||'').substring(0,60)}</td>
     </tr>`;
   });
   html += '</tbody></table>';
@@ -1378,41 +1379,41 @@ BOT_HTML = r"""<!DOCTYPE html>
   .back { color: #88b8ff; text-decoration: none; font-size: 0.9em; }
   .back:hover { text-decoration: underline; }
   h1 { font-size: 1.6em; color: #f0f0f0; flex: 1; }
-  h1 small { color: #6b7585; font-size: 0.55em; font-weight: 400; display: block; }
+  h1 small { color: #6a7789; font-size: 0.55em; font-weight: 400; display: block; }
   .price-big { font-size: 2.4em; font-weight: 800; color: #f0f0f0;
                font-family: "Consolas", monospace; margin: 20px 0 4px; }
   .price-change { font-size: 1em; margin-bottom: 24px; }
-  .up   { color: #50e350; }  .down { color: #e35050; }
+  .up   { color: #3fd08a; }  .down { color: #ff6d7d; }
   .card { background: #131820; border: 1px solid #1f2530;
           border-radius: 8px; padding: 20px; margin-bottom: 16px; }
-  .card h2 { font-size: 0.75em; color: #8b95a7; text-transform: uppercase;
+  .card h2 { font-size: 0.75em; color: #98a6ba; text-transform: uppercase;
              letter-spacing: 0.5px; margin-bottom: 14px; }
   .stat { display: flex; justify-content: space-between; padding: 7px 0;
           font-size: 0.9em; border-bottom: 1px solid #1a2030; }
   .stat:last-child { border-bottom: 0; }
-  .stat .label { color: #8b95a7; }
+  .stat .label { color: #98a6ba; }
   .stat .value { font-family: "Consolas", monospace; color: #f0f0f0; }
   .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
   .btn { padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer;
          font-size: 0.9em; font-weight: 700; transition: opacity 0.15s; }
   .btn:hover { opacity: 0.8; }
   .btn-pause   { background: #3b3a1f; color: #e3c050; }
-  .btn-resume  { background: #1f4a1f; color: #50e350; }
+  .btn-resume  { background: #1f4a1f; color: #3fd08a; }
   .btn-kill    { background: #7a1f1f; color: #ffaaaa; }
   .btn-release { background: #1f4a1f; color: #aaffaa; }
   .btn-close   { background: #5a2030; color: #ffb0b0; }
   canvas.chart { display: block; width: 100%; height: 120px; }
   .status-badge { display: inline-block; padding: 4px 12px; border-radius: 4px;
                   font-size: 0.85em; font-weight: 700; }
-  .status-active { background: #1f4a2a; color: #50e350; }
+  .status-active { background: #1f4a2a; color: #3fd08a; }
   .status-paused { background: #4a2a1f; color: #e3a050; }
   .status-kill   { background: #5a1f1f; color: #ff5050; }
-  .status-cold   { background: #1f2a3a; color: #8b95a7; }
-  footer { text-align: center; margin-top: 30px; font-size: 0.75em; color: #6b7585; }
+  .status-cold   { background: #1f2a3a; color: #98a6ba; }
+  footer { text-align: center; margin-top: 30px; font-size: 0.75em; color: #6a7789; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 6px 8px; font-size: 0.83em;
            border-bottom: 1px solid #1f2530; }
-  th { color: #8b95a7; font-weight: 600; font-size: 0.75em; text-transform: uppercase; }
+  th { color: #98a6ba; font-weight: 600; font-size: 0.75em; text-transform: uppercase; }
 </style>
 </head>
 <body>
@@ -1497,7 +1498,7 @@ function drawChart(canvas, prices) {
   const min = Math.min(...prices), max = Math.max(...prices);
   const range = (max - min) || 1;
   const up = prices[prices.length-1] >= prices[0];
-  const col = up ? '#50e350' : '#e35050';
+  const col = up ? '#3fd08a' : '#ff6d7d';
 
   const grad = ctx.createLinearGradient(0,0,0,h);
   grad.addColorStop(0, up ? 'rgba(80,227,80,0.3)' : 'rgba(227,80,80,0.3)');
@@ -1580,7 +1581,7 @@ async function refresh() {
       const pnlUsd = pos.qty * (bot.current_price - pos.avg_price) - feeRt * pos.qty * pos.avg_price;
       const el = document.getElementById('pos-pnl');
       el.textContent = fmtPct(pnlPct) + ' ($' + fmt(pnlUsd) + ')';
-      el.style.color = pnlPct >= 0 ? '#50e350' : '#e35050';
+      el.style.color = pnlPct >= 0 ? '#3fd08a' : '#ff6d7d';
     }
   } else {
     document.getElementById('pos-qty').textContent = 'Aucune position';
@@ -1596,7 +1597,7 @@ async function refresh() {
   document.getElementById('ts-winrate').textContent = ts.win_rate != null ? Math.round(ts.win_rate*100)+'%' : '—';
   const tsPnl = document.getElementById('ts-pnl');
   tsPnl.textContent = (ts.net_pnl_usdc>=0?'+':'') + '$' + fmt(ts.net_pnl_usdc);
-  tsPnl.style.color = ts.n_closed === 0 ? '#9aa4b2' : (ts.net_pnl_usdc >= 0 ? '#50e350' : '#e35050');
+  tsPnl.style.color = ts.n_closed === 0 ? '#9aa4b2' : (ts.net_pnl_usdc >= 0 ? '#3fd08a' : '#ff6d7d');
 
   // Indicateurs
   document.getElementById('ind-warm').textContent   = bot.warmed_up ? '✅ Prêt (51 prix chargés)' : ('🔄 ' + bot.history_len + '/51 prix');
@@ -1614,15 +1615,15 @@ async function refresh() {
   const dec = bot.decisions || [];
   if (dec.length === 0) {
     document.getElementById('decisions').innerHTML =
-      '<div style="padding:12px;color:#6b7585;font-style:italic">Aucune décision pour ce bot</div>';
+      '<div style="padding:12px;color:#6a7789;font-style:italic">Aucune décision pour ce bot</div>';
   } else {
     let html = '<table><thead><tr><th>Heure</th><th>Type</th><th>Action</th><th>Conf.</th><th>Raison</th></tr></thead><tbody>';
     dec.forEach(d => {
       const conf = d.confidence != null ? Math.round(d.confidence*100)+'%' : '—';
-      const cls  = d.action==='buy' ? 'style="color:#50e350"' : d.action==='sell' ? 'style="color:#e35050"' : '';
+      const cls  = d.action==='buy' ? 'style="color:#3fd08a"' : d.action==='sell' ? 'style="color:#ff6d7d"' : '';
       html += `<tr><td>${d.timestamp.substring(11,16)}</td><td>${d.task_type}</td>
                <td ${cls}>${d.action||'—'}</td><td>${conf}</td>
-               <td style="color:#8b95a7">${(d.reasoning||'').substring(0,60)}</td></tr>`;
+               <td style="color:#98a6ba">${(d.reasoning||'').substring(0,60)}</td></tr>`;
     });
     html += '</tbody></table>';
     document.getElementById('decisions').innerHTML = html;
