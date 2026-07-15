@@ -25,6 +25,7 @@ import os
 import structlog
 from dotenv import load_dotenv
 
+from agents import autoclose
 from agents.dynamic_bot  import DynamicBot
 from agents.memory_agent import MemoryAgent
 from agents.orchestrator import Orchestrator
@@ -200,8 +201,13 @@ class BotSwarm:
     # ─────────────────────────────────────────────────────────────────────────
 
     async def add_bot(self, bot_id: str, symbol: str,
-                      weight: float = 0.1, name: str | None = None) -> dict:
-        """Ajoute un bot sur une paire arbitraire et démarre sa tâche."""
+                      weight: float = 0.1, name: str | None = None,
+                      bot_type: str = "trend") -> dict:
+        """Ajoute un bot sur une paire arbitraire et démarre sa tâche.
+
+        bot_type="trend" par defaut : la strategie actuelle est trend-only.
+        (bot_type autre que "trend" -> Orchestrator scalpeur, a la demande.)
+        """
         bot_id = bot_id.lower().strip()
         symbol = symbol.upper()
         if not bot_id.isalnum():
@@ -215,6 +221,11 @@ class BotSwarm:
 
         cfg = {"bot_id": bot_id, "symbol": symbol,
                "weight": weight, "name": name or bot_id.upper()}
+        # Strategie actuelle = trend-only : un bot ajoute doit etre un TrendBot.
+        # Sans "type", _make_bot retombait sur un Orchestrator (scalpeur) — soit un
+        # bot d'un AUTRE type que la strategie validee (stops serres, take-profit).
+        if bot_id != "dynamique":
+            cfg["type"] = bot_type
         bot = self._make_bot(cfg)
         self.bots.append(bot)
         if self._running:
@@ -337,6 +348,9 @@ class BotSwarm:
             # Infos supplementaires pour le bot dynamique
             if bot.bot_id == "dynamique" and hasattr(bot, "get_last_perfs"):
                 entry["dynamic_perfs"] = bot.get_last_perfs()
+            # Config "close reglable" (TrendBots seulement)
+            if isinstance(bot, TrendBot):
+                entry["autoclose"] = autoclose.get(bot.bot_id)
             out.append(entry)
         return out
 

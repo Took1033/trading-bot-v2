@@ -37,9 +37,12 @@ def export_journal() -> int:
     """Genere le CSV. Retourne le nombre de lignes ecrites."""
     with _db() as conn:
         rows = conn.execute(
+            # role IN (...) : orchestrator (scalpeur historique) + trend_bot
+            # (bots actuels) + user (cloture manuelle). Le filtre orchestrator/
+            # trend_bot seul faisait disparaitre les clotures manuelles du CSV.
             "SELECT timestamp, role, symbol, action, confidence, reasoning, metadata "
             "FROM decisions "
-            "WHERE task_type='order' AND role='orchestrator' "
+            "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') "
             "AND action IN ('buy','sell') "
             "ORDER BY timestamp ASC"
         ).fetchall()

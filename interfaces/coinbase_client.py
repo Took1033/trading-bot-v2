@@ -229,6 +229,11 @@ class CoinbaseClient:
                 retryable = any(s in msg for s in (
                     "timeout", "connection", "503", "502", "504", "521", "522",
                     "temporarily unavailable", "rate limit", "429",
+                    # 500 / INTERNAL cote Coinbase = panne serveur transitoire, pas une
+                    # erreur metier. Sur create_order c'est sans risque : l'ordre porte un
+                    # client_order_id fixe -> Coinbase deduplique un retry (pas de double
+                    # ordre). Cf incident 14/07 : 81x "500 INTERNAL" en 3 min, non retentees.
+                    "500 server error", "internal server error",
                 ))
                 if not retryable or attempt == 2:
                     raise
@@ -280,6 +285,35 @@ class CoinbaseClient:
     # ─────────────────────────────────────────────────────────────────────────
     # Ordres
     # ─────────────────────────────────────────────────────────────────────────
+
+    async def _sell_base_size(self, symbol: str, qty: float) -> str:
+        """base_size (chaine) arrondi VERS LE BAS au base_increment du produit.
+
+        Coinbase rejette une taille trop precise (INVALID_SIZE_PRECISION) : le pas
+        autorise depend de la paire (8 decimales OK pour BTC/ETH, plus grossier pour
+        HYPE/LINK...). On floor a l'increment -> jamais plus que detenu. Cache par
+        symbole. Fallback : 8 decimales si le produit n'est pas recuperable.
+        """
+        from decimal import Decimal, ROUND_DOWN
+        if not hasattr(self, "_base_incr_cache"):
+            self._base_incr_cache = {}
+        inc = self._base_incr_cache.get(symbol)
+        if inc is None:
+            try:
+                product = await self._run_sync(self._real_client.get_product, symbol)
+                inc = str(getattr(product, "base_increment", "") or "")
+            except Exception as exc:
+                log.warning("base_increment_fetch_failed", symbol=symbol, error=str(exc)[:120])
+                inc = ""
+            self._base_incr_cache[symbol] = inc
+        try:
+            if inc:
+                step = Decimal(inc)
+                q = (Decimal(str(qty)) / step).to_integral_value(rounding=ROUND_DOWN) * step
+                return format(q.quantize(step), "f")
+        except Exception as exc:
+            log.warning("quantize_size_failed", symbol=symbol, error=str(exc)[:120])
+        return format(Decimal(str(round(qty, 8))), "f")
 
     async def place_order(
         self,
@@ -392,11 +426,13 @@ class CoinbaseClient:
             log.info("live_order_buy", symbol=symbol, usdc=usdc_amount, price=price)
 
         else:  # sell
-            # On vend en base currency (base_size = quantite crypto), arrondi a 8 decimales
-            base_size = round(qty, 8)
+            # base_size doit respecter le base_increment du produit, sinon Coinbase
+            # rejette (INVALID_SIZE_PRECISION). round(qty,8) cassait sur HYPE/LINK
+            # (pas plus grossier) -> on floor au pas autorise. Cf incident 14/07.
+            base_size = await self._sell_base_size(symbol, qty)
             order_config = {
                 "market_market_ioc": {
-                    "base_size": str(base_size)
+                    "base_size": base_size
                 }
             }
             log.info("live_order_sell", symbol=symbol, qty=base_size, price=price)

@@ -137,7 +137,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             ).fetchone()
             last_order = conn.execute(
                 "SELECT timestamp, action FROM decisions "
-                "WHERE task_type='order' AND role='orchestrator' "
+                "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') "
                 "ORDER BY timestamp DESC LIMIT 1"
             ).fetchone()
     except Exception:
@@ -430,14 +430,14 @@ async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         with _db() as conn:
             # Tous les ordres executes
             buys = conn.execute(
-                "SELECT timestamp, metadata FROM decisions "
-                "WHERE role='orchestrator' AND task_type='order' AND action='buy' "
-                "ORDER BY timestamp ASC"
+                "SELECT symbol, timestamp, metadata FROM decisions "
+                "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') "
+                "AND action='buy' ORDER BY timestamp ASC"
             ).fetchall()
             sells = conn.execute(
-                "SELECT timestamp, metadata FROM decisions "
-                "WHERE role='orchestrator' AND task_type='order' AND action='sell' "
-                "ORDER BY timestamp ASC"
+                "SELECT symbol, timestamp, metadata FROM decisions "
+                "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') "
+                "AND action='sell' ORDER BY timestamp ASC"
             ).fetchall()
 
             # Snapshots pour le drawdown
@@ -474,13 +474,20 @@ async def cmd_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         m = re.search(r'"qty":\s*([\d.]+)', meta_str or "")
         return float(m.group(1)) if m else None
 
+    # Appariement FIFO PAR SYMBOLE (le pairing positionnel buys[i]/sells[i]
+    # melangeait les paires et ignorait trend_bot + clotures manuelles).
+    open_lots: dict[str, list[float]] = {}
+    for row in buys:
+        bp, bq = _extract_price(row["metadata"]), _extract_qty(row["metadata"])
+        if bp and bq:
+            open_lots.setdefault(row["symbol"], []).append(bp)
     trades_pnl: list[float] = []
-    n = min(len(buys), len(sells))
-    for i in range(n):
-        bp, bq = _extract_price(buys[i]["metadata"]),  _extract_qty(buys[i]["metadata"])
-        sp, sq = _extract_price(sells[i]["metadata"]), _extract_qty(sells[i]["metadata"])
-        if bp and sp and bq:
-            trades_pnl.append(sp - bp)   # P&L par unite
+    for row in sells:
+        sp   = _extract_price(row["metadata"])
+        lots = open_lots.get(row["symbol"])
+        if sp and lots:
+            bp = lots.pop(0)
+            trades_pnl.append(sp - bp)   # P&L par unite (sortie - entree)
 
     n_trades  = len(trades_pnl)
     n_wins    = sum(1 for p in trades_pnl if p > 0)

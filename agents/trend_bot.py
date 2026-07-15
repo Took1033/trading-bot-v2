@@ -22,6 +22,7 @@ import structlog
 from dotenv import load_dotenv
 
 from agents import trading_state
+from agents import autoclose
 from agents.market_agent import MarketAgent
 from interfaces import notifier
 from strategies.simple_ma  import Signal
@@ -82,7 +83,11 @@ class TrendBot:
             raise
 
     async def _tick(self) -> None:
-        if trading_state.is_paused(self.bot_id) or trading_state.is_kill_switch_active():
+        # Pause individuelle : tick saute. Le kill switch global ne bloque que
+        # l'ENTREE (plus bas) : evaluation, persistance des signaux et sorties
+        # (trailing / retournement SMA50) continuent — un trend-follower doit
+        # pouvoir fermer sa position meme en plein Extreme Fear.
+        if trading_state.is_bot_paused(self.bot_id):
             return
 
         live_price = await self._coinbase.get_price(self.symbol)
@@ -100,11 +105,42 @@ class TrendBot:
         pos      = self._coinbase.get_position(self.symbol)
         have_pos = bool(pos and pos.get("qty", 0) > 0)
 
-        # Trailing-stop optionnel (OFF par defaut) : sortie si le prix recule de
-        # TREND_TRAIL_PCT depuis le plus haut atteint depuis l'entree. Verrouille
-        # le gain ouvert sans attendre le retournement de SMA50.
+        # Sorties de protection sur position ouverte (avant l'evaluation SMA) :
+        #  1) "Close reglable" par bot (autoclose) : take-profit fixe OU trailing,
+        #     OFF par defaut, arme a la demande depuis le dashboard. Apres
+        #     declenchement le bot RESTE ACTIF (rachat possible au tick suivant si
+        #     la tendance tient) — choix du 2026-07-12.
+        #  2) Trailing-stop GLOBAL (TREND_TRAIL_PCT, env) : conserve, OFF par defaut.
         if have_pos:
             self._peak_price = max(self._peak_price, live_price)
+            avg = pos.get("avg_price", 0.0) or 0.0
+
+            ac = autoclose.get(self.bot_id)
+            if ac.get("active") and avg > 0:
+                thr = float(ac.get("threshold_pct", 0) or 0)
+                if ac.get("mode") == "take_profit":
+                    gain = (live_price - avg) / avg * 100
+                    if thr > 0 and gain >= thr:
+                        meta = {"gain_pct": round(gain, 2), "threshold_pct": thr}
+                        tp_sig = Signal(
+                            "sell", 0.95,
+                            f"TAKE-PROFIT reglable : +{gain:.1f}% (seuil +{thr:.0f}%)",
+                            self.symbol, meta)
+                        await self._exit(live_price, pos, tp_sig)
+                        return
+                elif self._peak_price > 0:                       # mode trailing
+                    drop = (self._peak_price - live_price) / self._peak_price * 100
+                    if thr > 0 and drop >= thr:
+                        meta = {"peak": round(self._peak_price, 6),
+                                "drop_pct": round(drop, 2), "threshold_pct": thr}
+                        tr_sig = Signal(
+                            "sell", 0.95,
+                            f"TRAILING reglable : -{drop:.1f}% depuis pic "
+                            f"{self._peak_price:.4f} (seuil {thr:.0f}%)",
+                            self.symbol, meta)
+                        await self._exit(live_price, pos, tr_sig)
+                        return
+
             if TREND_TRAIL_PCT > 0 and self._peak_price > 0:
                 drop = (self._peak_price - live_price) / self._peak_price
                 if drop >= TREND_TRAIL_PCT:
@@ -122,6 +158,10 @@ class TrendBot:
             self._peak_price = 0.0
 
         if sig.action == "buy" and not have_pos:
+            if trading_state.is_kill_switch_active():
+                log.info("trend_entry_blocked_kill_switch", bot_id=self.bot_id,
+                         reason=trading_state.get_kill_reason())
+                return
             await self._enter(live_price, sig)
         elif sig.action == "sell" and have_pos:
             await self._exit(live_price, pos, sig)

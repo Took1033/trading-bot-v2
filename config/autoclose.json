@@ -1,0 +1,22 @@
+{
+  "trend_btc": {
+    "active": false,
+    "mode": "trailing",
+    "threshold_pct": 5.0
+  },
+  "trend_aave": {
+    "active": false,
+    "mode": "trailing",
+    "threshold_pct": 5.0
+  },
+  "trend_sol": {
+    "active": true,
+    "mode": "take_profit",
+    "threshold_pct": 5.0
+  },
+  "trend_eth": {
+    "active": false,
+    "mode": "take_profit",
+    "threshold_pct": 3.5
+  }
+}

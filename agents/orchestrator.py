@@ -323,7 +323,11 @@ class Orchestrator:
         """Un cycle complet : SL/TP -> signal -> risque -> ordre -> snapshot."""
 
         # ── 0. Verifier la pause ──────────────────────────────────────────────
-        if trading_state.is_paused(self.bot_id):
+        # Pause individuelle (/pause) : tick saute. Le kill switch global, lui,
+        # ne bloque QUE les nouvelles entrees (voir 6c) : SL/TP, evaluation et
+        # persistance continuent — une position ouverte doit rester protegee et
+        # le systeme observable meme en Extreme Fear.
+        if trading_state.is_bot_paused(self.bot_id):
             log.info("tick_paused", symbol=self.symbol)
             return
 
@@ -484,6 +488,16 @@ class Orchestrator:
         if self._last_trade_ts > 0 and elapsed < TRADE_COOLDOWN_S:
             remaining = int(TRADE_COOLDOWN_S - elapsed)
             log.info("trade_cooldown_active", remaining_s=remaining)
+            return
+
+        # ── 6c. Kill switch global : aucune NOUVELLE entree ───────────────────
+        # Les sorties restent autorisees (SL/TP en 3, sell signal plus bas) :
+        # le kill switch reduit l'exposition, il n'empeche jamais de la fermer.
+        # Streak resete pour exiger une confirmation fraiche a la levee.
+        if signal["action"] == "buy" and trading_state.is_kill_switch_active():
+            log.info("buy_blocked_kill_switch", symbol=self.symbol,
+                     reason=trading_state.get_kill_reason())
+            self._signal_streak = {"action": None, "count": 0}
             return
 
         # ── 7. Validation AI (Claude Haiku — optionnel, si cle configuree) ──────

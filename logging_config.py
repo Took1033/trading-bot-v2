@@ -21,13 +21,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-LOG_DIR   = Path("logs")
+# Logs HORS OneDrive/Bureau : ce dossier est "protege" par l'antivirus (agent
+# anti-ransomware) et un python qui y ecrit en boucle se fait tuer tout net
+# (incident 12/07/2026). On loge donc a cote de la base (DB_PATH -> C:\Kairos).
+# Fallback = ancien "logs" local si DB_PATH n'est pas defini.
+_DB_PATH  = os.getenv("DB_PATH", "").strip()
+LOG_DIR   = (Path(_DB_PATH).parent / "logs") if _DB_PATH else Path("logs")
 LOG_FILE  = LOG_DIR / "trading.log"
 
 
 def configure_logging() -> None:
     """Configure structlog + handlers fichier et console."""
-    LOG_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     # Processeurs partages : appliques a chaque log avant le rendu final
     shared_processors = [

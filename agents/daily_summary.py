@@ -6,9 +6,11 @@ Calcule les metriques des dernieres 24h depuis la DB et notifie.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import os
 import sqlite3
+import time
 from datetime import datetime, time as dt_time, timedelta, timezone
 
 import structlog
@@ -53,8 +55,11 @@ def _compute_24h_metrics() -> dict:
         ).fetchone()[0]
 
         orders_executed = conn.execute(
+            # role IN (...) : orchestrator (scalpeur historique) + trend_bot
+            # (bots actuels) + user (cloture manuelle) comptent tous comme
+            # ordre execute — sinon les clotures manuelles disparaissent du resume.
             "SELECT COUNT(*) FROM decisions "
-            "WHERE task_type='order' AND role='orchestrator' "
+            "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') "
             "AND action IN ('buy','sell') AND timestamp >= ?",
             (since,),
         ).fetchone()[0]
@@ -153,12 +158,55 @@ def _format_system_state() -> str:
     lines = ["", "*État système*"]
     if killed:
         reason = trading_state.get_kill_reason() or "—"
-        lines.append(f"  Kill switch : 🔴 *ACTIF* — _{reason}_")
+        since  = trading_state.get_kill_since()
+        days   = f" depuis `{int((time.time() - since) // 86400)} j`" if since else ""
+        lines.append(f"  Kill switch : 🔴 *ACTIF*{days} — _{reason}_")
     else:
         lines.append("  Kill switch : 🟢 inactif")
     if fg_value is not None:
         lines.append(f"  Fear & Greed : `{fg_value}` ({fg_label})")
     lines.append(f"  Mode : `{mode}`")
+    return "\n".join(lines)
+
+
+def _format_trend_state() -> str:
+    """Bloc tendance : dernier signal de chaque TrendBot (distance a la SMA50).
+
+    Rend le silence lisible : « flat sous la SMA50 » est un etat normal qui
+    doit se VOIR dans le resume, pas se deviner. Un signal vieux de plus de
+    24h est marque stale — c'est le symptome d'une boucle d'evaluation morte.
+    """
+    try:
+        with _db() as conn:
+            rows = conn.execute(
+                "SELECT symbol, action, metadata, MAX(timestamp) AS ts "
+                "FROM decisions WHERE role='trend_bot' AND task_type='signal' "
+                "GROUP BY symbol ORDER BY symbol"
+            ).fetchall()
+    except Exception as exc:
+        log.debug("trend_state_skip", error=str(exc))
+        return ""
+    if not rows:
+        return ""
+
+    lines = ["", "*Tendance (dernier signal)*"]
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        dist_txt = "?"
+        try:
+            meta = ast.literal_eval(r["metadata"] or "{}")
+            dist_txt = f"`{float(meta['dist_pct']):+.1f}%` vs SMA50"
+        except Exception:
+            pass
+        state = "long" if r["action"] == "buy" else "flat"
+        stale = ""
+        try:
+            ts = datetime.fromisoformat(r["ts"])
+            if (now - ts).total_seconds() > 86400:
+                stale = " ⚠️ _signal > 24h_"
+        except Exception:
+            pass
+        lines.append(f"  `{r['symbol']}` : {dist_txt} → {state}{stale}")
     return "\n".join(lines)
 
 
@@ -177,7 +225,8 @@ async def daily_summary_loop() -> None:
             await asyncio.sleep(wait_s)
 
             metrics = _compute_24h_metrics()
-            message = _format_summary(metrics) + "\n" + _format_system_state()
+            message = (_format_summary(metrics) + "\n" + _format_system_state()
+                       + _format_trend_state())
 
             # Enrichissement Claude Haiku : narration en 2 phrases
             try:

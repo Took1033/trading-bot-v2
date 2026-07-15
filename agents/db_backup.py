@@ -20,7 +20,10 @@ load_dotenv()
 log = structlog.get_logger()
 
 DB_PATH         = os.getenv("DB_PATH", "memory/trading.db")
-BACKUP_DIR      = Path(DB_PATH).parent / "backups"
+# DB_BACKUP_DIR decouple du dossier de la DB : permet une DB vive hors OneDrive
+# (pas de locks/sync sur SQLite) tout en gardant les copies froides DANS
+# OneDrive comme sauvegarde cloud.
+BACKUP_DIR      = Path(os.getenv("DB_BACKUP_DIR", "") or (Path(DB_PATH).parent / "backups"))
 BACKUP_INTERVAL = int(os.getenv("DB_BACKUP_INTERVAL_H", "6")) * 3600
 MAX_BACKUPS     = int(os.getenv("DB_BACKUP_KEEP",       "10"))
 

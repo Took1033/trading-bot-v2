@@ -98,14 +98,14 @@ def _compute_7d_metrics() -> dict:
         # Ordres executes (sells = trades fermes)
         sells = conn.execute(
             "SELECT symbol, timestamp, metadata FROM decisions "
-            "WHERE task_type='order' AND role='orchestrator' AND action='sell' "
+            "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') AND action='sell' "
             "AND timestamp >= ? ORDER BY timestamp",
             (since,),
         ).fetchall()
 
         buys = conn.execute(
             "SELECT symbol, timestamp, metadata FROM decisions "
-            "WHERE task_type='order' AND role='orchestrator' AND action='buy' "
+            "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') AND action='buy' "
             "AND timestamp >= ? ORDER BY timestamp",
             (since,),
         ).fetchall()

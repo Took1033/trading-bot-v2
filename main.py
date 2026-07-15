@@ -17,13 +17,28 @@ Variables d'env requises (.env) :
 """
 from __future__ import annotations
 
+# Avast (et autres antivirus) intercepte le HTTPS avec un CA racine que la
+# verification stricte d'OpenSSL rejette ("Basic Constraints not marked critical")
+# -> tous les appels Coinbase/Telegram/RSS echouent en SSL quand le process est
+# scanne. truststore delegue la validation au magasin de certificats de Windows
+# (SChannel), qui accepte ce CA. A injecter AVANT tout appel reseau (donc ici).
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+
 import asyncio
 import os
 import sys
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=True : le .env fait foi. Sans ca, un DB_PATH (ou autre) fige dans
+# l'environnement du wrapper run_with_restart (son import de notifier charge
+# dotenv au premier crash) est herite par ce processus et masque les valeurs
+# a jour du .env apres un restart.
+load_dotenv(override=True)
 
 from logging_config import configure_logging
 configure_logging()

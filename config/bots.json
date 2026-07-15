@@ -34,6 +34,20 @@
       "weight": 0.15,
       "name": "Trend NEAR",
       "type": "trend"
+    },
+    {
+      "bot_id": "hype",
+      "symbol": "HYPE-USDC",
+      "weight": 0.1,
+      "name": "HYPE",
+      "type": "trend"
+    },
+    {
+      "bot_id": "link",
+      "symbol": "LINK-USDC",
+      "weight": 0.1,
+      "name": "LINK",
+      "type": "trend"
     }
   ]
 }

@@ -42,7 +42,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DASHBOARD_PORT  = int(os.getenv("DASHBOARD_PORT", "8080"))
-LOG_FILE        = Path("logs") / "trading.log"
+LOG_FILE        = Path(os.getenv("DB_PATH", "memory/trading.db")).parent / "logs" / "trading.log"
 STATE_FILE      = Path(os.getenv("DB_PATH", "memory/trading.db")).parent / ".watchdog_state.json"
 MAX_LOG_AGE_MIN = float(os.getenv("WATCHDOG_MAX_LOG_AGE_MIN", "15"))
 MAX_DD_PCT      = float(os.getenv("WATCHDOG_MAX_DD_PCT", "6.0"))    # % sous le pic
