@@ -631,6 +631,11 @@ HTML = r"""<!DOCTYPE html>
         <div class="ind-chip"><span class="lbl">État</span><span class="val" id="ind-state">—</span></div>
         <div class="ind-chip"><span class="lbl">Période SMA</span><span class="val" id="ind-period">—</span></div>
         <div class="ind-chip"><span class="lbl">Confiance</span><span class="val" id="ind-conf">—</span></div>
+        <div class="ind-chip"><span class="lbl">Pente SMA</span><span class="val" id="ind-slope">—</span></div>
+        <div class="ind-chip"><span class="lbl">Âge tendance</span><span class="val" id="ind-age">—</span></div>
+        <div class="ind-chip"><span class="lbl">SMA courte</span><span class="val" id="ind-smashort">—</span></div>
+        <div class="ind-chip"><span class="lbl">Régime</span><span class="val" id="ind-regime">—</span></div>
+        <div class="ind-chip"><span class="lbl">Volatilité</span><span class="val" id="ind-vol">—</span></div>
       </div>
       <div style="font-size:0.75em;color:#6a7789;margin-top:8px;" id="ind-symbol-ts">—</div>
     </div>
@@ -1316,6 +1321,34 @@ async function loadSignalDebug() {
   setChip('ind-state',  dist == null ? '—' : (isLong ? '📈 long' : '⚪ flat'));
   setChip('ind-period', period + ' j');
   setChip('ind-conf',   d.confidence != null ? Math.round(d.confidence * 100) + '%' : '—');
+
+  // ── Indicateurs de tendance (affichage seul, calcules par trend_daily) ──
+  const num = v => (v == null || isNaN(parseFloat(v))) ? null : parseFloat(v);
+  const slope = num(meta.sma_slope_pct);
+  const slopeEl = document.getElementById('ind-slope');
+  if (slopeEl) {
+    slopeEl.textContent = slope == null ? '—' : (slope >= 0 ? '↑ +' : '↓ ') + slope.toFixed(2) + ' %/j';
+    slopeEl.style.color = slope == null ? '' : (slope >= 0 ? '#3fd08a' : '#ff6d7d');
+  }
+  const age = num(meta.trend_age_days);
+  setChip('ind-age', age == null ? '—'
+    : (meta.trend_age_side === 'up' ? '↑ ' : '↓ ') + age + (meta.trend_age_capped ? '+ j' : ' j'));
+  const smaS = num(meta.sma_short), spread = num(meta.sma_spread_pct);
+  setChip('ind-smashort', smaS == null ? '—'
+    : fmtPrice(smaS) + (meta.sma_short_period ? ' (' + meta.sma_short_period + 'j)' : '')
+      + (spread == null ? '' : ' · ' + (spread >= 0 ? '+' : '') + spread.toFixed(1) + '%'));
+  const r2 = num(meta.trend_r2);
+  const regEl = document.getElementById('ind-regime');
+  if (regEl) {
+    if (meta.trend_regime == null) { regEl.textContent = '—'; regEl.style.color = ''; }
+    else {
+      const isTrend = meta.trend_regime === 'trend';
+      regEl.textContent = (isTrend ? '📈 tendance' : '↔ range') + (r2 != null ? ' (R² ' + r2.toFixed(2) + ')' : '');
+      regEl.style.color = isTrend ? '#3fd08a' : '#e8b552';
+    }
+  }
+  const vol = num(meta.volatility_pct);
+  setChip('ind-vol', vol == null ? '—' : vol.toFixed(2) + ' %/j');
 
   if (d.symbol && d.timestamp) {
     document.getElementById('ind-symbol-ts').textContent =

@@ -31,6 +31,81 @@ _DAILY_TTL_S     = int(os.getenv("TREND_DAILY_CACHE_S", "21600"))   # 6h (daily 
 _cache: dict[str, tuple[float, list[float]]] = {}
 
 
+def _trend_indicators(closes: list[float], sma_long: float, period: int) -> dict:
+    """Indicateurs de tendance derives des clotures journalieres — AFFICHAGE SEUL.
+
+    N'influence JAMAIS la decision buy/sell (appele sous try/except par
+    compute_trend_signal). Pur Python, aucune dependance.
+    Renvoie : sma_short, sma_slope_pct, trend_age_days(+side/capped),
+              trend_r2 (regime), volatility_pct.
+    """
+    out: dict = {}
+    n = len(closes)
+    if n < 5:
+        return out
+
+    # SMA courte (moitie de la periode longue, plancher 5 jours) + son ecart a la longue
+    short_p = max(5, period // 2)
+    if n >= short_p:
+        sma_short = sum(closes[-short_p:]) / short_p
+        out["sma_short"] = round(sma_short, 4)
+        out["sma_short_period"] = short_p
+        if sma_long > 0:
+            out["sma_spread_pct"] = round((sma_short - sma_long) / sma_long * 100, 2)
+
+    # Pente de la SMA longue : variation moyenne en %/jour sur les 5 derniers jours
+    look = 5
+    if n >= period + look:
+        sma_prev = sum(closes[-period - look:-look]) / period
+        if sma_prev > 0:
+            out["sma_slope_pct"] = round((sma_long - sma_prev) / sma_prev / look * 100, 3)
+
+    # Age de la tendance : jours consecutifs ou la cloture reste du meme cote de SA SMA
+    if n >= period + 1:
+        side = None
+        age = 0
+        max_age = n - period + 1
+        for i in range(n, period - 1, -1):
+            sma_i = sum(closes[i - period:i]) / period
+            up = closes[i - 1] >= sma_i
+            if side is None:
+                side = up
+            if up == side:
+                age += 1
+            else:
+                break
+        out["trend_age_days"] = age
+        out["trend_age_side"] = "up" if side else "down"
+        out["trend_age_capped"] = age >= max_age
+
+    # Regime tendance/range : R2 d'une regression lineaire sur les N derniers closes
+    win = min(n, max(period // 2, 20))
+    if win >= 5:
+        ys = closes[-win:]
+        xs = list(range(win))
+        mx = sum(xs) / win
+        my = sum(ys) / win
+        sxx = sum((x - mx) ** 2 for x in xs)
+        syy = sum((y - my) ** 2 for y in ys)
+        sxy = sum((xs[i] - mx) * (ys[i] - my) for i in range(win))
+        if sxx > 0 and syy > 0:
+            r = sxy / (sxx * syy) ** 0.5
+            out["trend_r2"] = round(r * r, 3)
+            out["trend_regime"] = "trend" if r * r >= 0.5 else "range"
+
+    # Volatilite : ecart-type des rendements journaliers sur ~20 jours, en %
+    vw = min(n - 1, 20)
+    if vw >= 2:
+        rets = [closes[-i] / closes[-i - 1] - 1.0
+                for i in range(1, vw + 1) if closes[-i - 1] > 0]
+        if len(rets) >= 2:
+            m = sum(rets) / len(rets)
+            var = sum((x - m) ** 2 for x in rets) / (len(rets) - 1)
+            out["volatility_pct"] = round(var ** 0.5 * 100, 2)
+
+    return out
+
+
 def compute_trend_signal(
     symbol: str,
     live_price: float,
@@ -54,6 +129,12 @@ def compute_trend_signal(
     meta = {"sma": round(sma, 4), "sma_period": sma_period,
             "dist_pct": round(dist_pct, 2), "live_price": round(live_price, 4)}
 
+    # Indicateurs d'AFFICHAGE : isoles, n'influencent jamais la decision ci-dessous.
+    try:
+        meta.update(_trend_indicators(daily_closes, sma, sma_period))
+    except Exception:
+        pass
+
     if live_price > sma:
         return Signal("buy", 0.90,
                       f"Trend HAUSSIER : prix {live_price:.4f} > SMA{sma_period} {sma:.4f} ({dist_pct:+.1f}%)",
@@ -65,7 +146,7 @@ def compute_trend_signal(
 
 async def fetch_daily_closes(symbol: str, n: int | None = None) -> list[float]:
     """Clotures journalieres (API publique Coinbase Exchange), avec cache TTL."""
-    n = n or (TREND_SMA_PERIOD + 10)
+    n = n or (TREND_SMA_PERIOD + 70)   # +70 : historique pour age/regime (n'affecte ni la SMA ni la decision)
     now = time.time()
     cached = _cache.get(symbol)
     if cached and now - cached[0] < _DAILY_TTL_S:
