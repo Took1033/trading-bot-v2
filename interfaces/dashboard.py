@@ -356,38 +356,53 @@ HTML = r"""<!DOCTYPE html>
   #params .pp .ppv { font-family:"Consolas",monospace; font-size:.85rem; font-weight:700; color:#0c121b; white-space:nowrap; }
   #params .pp .ppv.warn { color:#8a5e08; }
 
-  /* ==== v4 DARK LISIBLE (override final : le dashboard est concu pour du sombre) ==== */
-  body { background:#20272f !important; color:#dce3ec !important; }
-  .card, .bot-card { background:#29323d !important; border-color:#3a4552 !important; }
-  .mindmap, .ind-chip, .phase-card { background:#242c36 !important; border-color:#3a4552 !important; }
-  .bot-stat, td, th, .sparkline, .tabs, .diag-threshold, .pair-ctrl { border-color:#3a4552 !important; }
-  .vote-bar-bg { background:#1f2730 !important; }
-  .pair-ctrl input, .ac-input, .add-bot-form input { background:#1f2730 !important; border-color:#3a4552 !important; color:#dce3ec !important; }
-  .metric, h1, .bot-stat .value, .ind-chip .val, .bot-card h3, .vote-score, .phase-title { color:#f2f6fb !important; }
-  .card h2, .bot-stat .label, .submetric, th, .vote-label, .diag-threshold, .phase-item { color:#9aa6b6 !important; }
-  h1 small, .bot-card .symbol, .ind-chip .lbl, footer, .tab { color:#7d8a9b !important; }
-  .pos-up { color:#3ddb8f !important; } .pos-down { color:#ff7480 !important; }
-  .badge.paper { background:#3b3a1f !important; color:#e3c050 !important; } .badge.live { background:#5a2020 !important; color:#e88080 !important; }
-  .badge.active { background:#1f3b1f !important; color:#50e350 !important; } .badge.kill { background:#5a1f1f !important; color:#ff5050 !important; }
-  .no-trade-badge { background:#2a2a1a !important; border-color:#4a3a1f !important; color:#e3c050 !important; }
-  .btn-kill { background:#7a1f1f !important; color:#ffaaaa !important; } .btn-release { background:#1f4a1f !important; color:#aaffaa !important; }
-  .btn-pause { background:#3b3a1f !important; color:#e3c050 !important; } .btn-resume { background:#1f3b2f !important; color:#50e3a0 !important; }
-  .btn-close { background:#5a2030 !important; color:#ffb0b0 !important; } .btn-open { background:#1f2a3a !important; color:#88b8ff !important; }
-  .btn-small { background:#1a2333 !important; color:#8b9eb3 !important; border-color:#2a3142 !important; }
-  .tab:hover { color:#dce3ec !important; } .tab.active { color:#88b8ff !important; border-bottom-color:#88b8ff !important; }
-  .node-bg { stroke:#3a4552 !important; } .node-label { fill:#f2f6fb !important; } .node-sub { fill:#9aa6b6 !important; }
-  .node-director { fill:#5a3a1f !important; } .node-active { fill:#1f4a2a !important; } .node-paused { fill:#4a2a1f !important; }
-  .node-kill { fill:#5a1f1f !important; } .node-cold { fill:#1f2a3a !important; } .edge { stroke:#2a3a4a !important; }
-  /* mes blocs custom -> dark lisible */
-  #hero .hcard, #statstrip .ss, #params.card { background:#29323d !important; border-color:#3a4552 !important; }
-  #hero .hlabel, #hero .g .gl, #statstrip .ssl, #params .params-head h2, #params .params-src, #hero .hfoot { color:#9aa6b6 !important; }
-  #hero .hval, #hero .g .gv, #statstrip .ssv, #params .pp .ppv, #hero .hfoot b { color:#f2f6fb !important; }
-  #params .pp { background:#242c36 !important; border-color:#3a4552 !important; }
-  #params .pp .ppl { color:#9aa6b6 !important; }
-  #hero .gtrack { background:#1f2730 !important; border-color:#3a4552 !important; }
-  #hero .gmk { background:#f2f6fb !important; box-shadow:0 0 0 2px #29323d !important; }
-  #hero .hdelta { background:#1f2730 !important; }
-  #params .pp .ppv.warn { color:#ffbe4d !important; }
+  /* ==== v5 DARK PREMIUM (theme unique actif — palette via tokens ci-dessous) ====
+     Source de vurite des couleurs. Pour retoucher le theme : ne changer QUE ces valeurs.
+     bg=fond  surf=carte  surf2=creux  bd=bordure  txt=texte  txt2=label  mut=discret
+     acc=accent bleu  pos=vert  neg=rouge  warn=ambre                                */
+  :root{
+    --bg:#0b1017; --surf:#151d29; --surf2:#0f1722; --surf-hi:#1c2635;
+    --bd:#25303f; --bd-hi:#33425a;
+    --txt:#eef3fa; --txt2:#98a6ba; --mut:#6a7789;
+    --acc:#5c9dff; --acc-soft:#16273f;
+    --pos:#3fd08a; --neg:#ff6d7d; --warn:#e8b552;
+  }
+  body { background:var(--bg) !important; color:var(--txt) !important; }
+  .card, .bot-card { background:var(--surf) !important; border-color:var(--bd) !important; }
+  .mindmap, .ind-chip, .phase-card { background:var(--surf2) !important; border-color:var(--bd) !important; }
+  .bot-stat, td, th, .sparkline, .tabs, .diag-threshold, .pair-ctrl { border-color:var(--bd) !important; }
+  .vote-bar-bg { background:var(--surf2) !important; }
+  .pair-ctrl input, .ac-input, .add-bot-form input { background:var(--surf2) !important; border-color:var(--bd) !important; color:var(--txt) !important; }
+  .pair-ctrl input:focus, .ac-input:focus, .add-bot-form input:focus { border-color:var(--acc) !important; box-shadow:0 0 0 3px var(--acc-soft) !important; }
+  .metric, h1, .bot-stat .value, .ind-chip .val, .bot-card h3, .vote-score, .phase-title { color:var(--txt) !important; }
+  .card h2, .bot-stat .label, .submetric, th, .vote-label, .diag-threshold, .phase-item { color:var(--txt2) !important; }
+  h1 small, .bot-card .symbol, .ind-chip .lbl, footer, .tab { color:var(--mut) !important; }
+  .pos-up { color:var(--pos) !important; } .pos-down { color:var(--neg) !important; }
+  .badge.paper { background:#33321c !important; color:var(--warn) !important; } .badge.live { background:#3a1c22 !important; color:var(--neg) !important; }
+  .badge.active { background:#123321 !important; color:var(--pos) !important; } .badge.kill { background:#3a1720 !important; color:#ff5a6a !important; }
+  .no-trade-badge { background:#2a2616 !important; border-color:#4a3f1f !important; color:var(--warn) !important; }
+  .btn-kill { background:#5a1e24 !important; color:#ffb3ba !important; } .btn-release { background:#12402a !important; color:#8ff0bf !important; }
+  .btn-pause { background:#3a3418 !important; color:var(--warn) !important; } .btn-resume { background:#123a2c !important; color:#5fe3ad !important; }
+  .btn-close { background:#4a2030 !important; color:#ffb0c0 !important; } .btn-open { background:var(--acc-soft) !important; color:var(--acc) !important; }
+  .btn-small { background:var(--surf-hi) !important; color:var(--txt2) !important; border-color:var(--bd) !important; }
+  .tab:hover { color:var(--txt) !important; } .tab.active { color:var(--acc) !important; border-bottom-color:var(--acc) !important; }
+  .node-bg { stroke:var(--bd) !important; } .node-label { fill:var(--txt) !important; } .node-sub { fill:var(--txt2) !important; }
+  .node-director { fill:#4a3a1f !important; } .node-active { fill:#12402a !important; } .node-paused { fill:#4a2a1f !important; }
+  .node-kill { fill:#4a1a22 !important; } .node-cold { fill:#1a2636 !important; } .edge { stroke:var(--bd-hi) !important; }
+  /* blocs custom -> theme premium */
+  #hero .hcard, #statstrip .ss, #params.card { background:var(--surf) !important; border-color:var(--bd) !important; }
+  #hero .hlabel, #hero .g .gl, #statstrip .ssl, #params .params-head h2, #params .params-src, #hero .hfoot { color:var(--txt2) !important; }
+  #hero .hval, #hero .g .gv, #statstrip .ssv, #params .pp .ppv, #hero .hfoot b { color:var(--txt) !important; }
+  #hero .hval { color:#ffffff !important; }
+  #params .pp { background:var(--surf2) !important; border-color:var(--bd) !important; }
+  #params .pp .ppl { color:var(--txt2) !important; }
+  #hero .gtrack { background:var(--surf2) !important; border-color:var(--bd) !important; }
+  #hero .gmk { background:var(--txt) !important; box-shadow:0 0 0 2px var(--surf) !important; }
+  #hero .hdelta { background:var(--surf2) !important; }
+  #params .pp .ppv.warn { color:var(--warn) !important; }
+  /* accents fins */
+  .bot-card.has-position { border-color:var(--pos) !important; }
+  .tab.active { text-shadow:0 0 12px rgba(92,157,255,.35); }
 </style>
 </head>
 <body>
@@ -419,12 +434,12 @@ HTML = r"""<!DOCTYPE html>
       <div class="gauges" style="margin-top:8px">
         <div class="g">
           <div class="gt"><span class="gl">Drawdown</span><span class="gv" id="g-dd-v">—</span></div>
-          <div class="gtrack"><i class="gfill" id="g-dd" style="background:#076b3c"></i></div>
+          <div class="gtrack"><i class="gfill" id="g-dd" style="background:var(--pos)"></i></div>
           <div class="gcap"><span>0%</span><span>seuil watchdog 6%</span></div>
         </div>
         <div class="g">
           <div class="gt"><span class="gl">Exposition combinée</span><span class="gv" id="g-exp-v">—</span></div>
-          <div class="gtrack"><i class="gfill" id="g-exp" style="background:#1652c8"></i></div>
+          <div class="gtrack"><i class="gfill" id="g-exp" style="background:var(--acc)"></i></div>
           <div class="gcap"><span>0%</span><span>cap 40%</span></div>
         </div>
         <div class="g">
@@ -450,8 +465,8 @@ HTML = r"""<!DOCTYPE html>
         document.getElementById('hero-val').textContent = fmt(val);
         var dEl = document.getElementById('hero-delta'), dp = pf.pnl_pct||0;
         dEl.textContent = (dp>=0?'▲ ':'▼ ')+pct(dp)+' · '+fmt(val-init);
-        dEl.style.background = dp>=0 ? '#a6d6bd' : '#e0b3ba';
-        dEl.style.color = dp>=0 ? '#075e37' : '#8a1f2c';
+        dEl.style.background = dp>=0 ? 'rgba(63,208,138,.15)' : 'rgba(255,109,125,.15)';
+        dEl.style.color = dp>=0 ? '#3fd08a' : '#ff6d7d';
         document.getElementById('hero-real').textContent = fmt(pf.pnl_realized);
         document.getElementById('hero-lat').textContent = fmt(pf.pnl_latent);
         document.getElementById('hero-init').textContent = fmt(init);
