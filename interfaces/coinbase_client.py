@@ -58,6 +58,17 @@ MAKER_FALLBACK_MARKET = os.getenv("MAKER_FALLBACK_MARKET", "true").lower() in ("
 # Types
 # ─────────────────────────────────────────────────────────────────────────────
 
+class UnsellableDustError(Exception):
+    """Position residuelle plus petite que le base_increment du produit.
+
+    Le floor au pas de cotation ramene la base_size a 0 : Coinbase rejette
+    (UNSUPPORTED_ORDER_CONFIGURATION) et le retry ne peut RIEN y changer. Un tel
+    residu ne sera jamais vendable -> l'appelant doit le solder localement au
+    lieu de retenter a chaque cycle. Cf incident 16/07 : HYPE, residu 0.00076
+    pour un pas de 0.001, sortie rejetee en boucle depuis 12:52.
+    """
+
+
 @dataclass
 class PaperPortfolio:
     """Portefeuille simule pour le paper trading."""
@@ -315,6 +326,16 @@ class CoinbaseClient:
             log.warning("quantize_size_failed", symbol=symbol, error=str(exc)[:120])
         return format(Decimal(str(round(qty, 8))), "f")
 
+    def forget_position(self, symbol: str) -> None:
+        """Oublie une position residuelle invendable (dust sous le pas de cotation).
+
+        Le suivi local croit detenir la position tant qu'elle depasse 1e-8, seuil
+        bien plus fin que le base_increment reel : un residu invendable resterait
+        donc "ouvert" a vie et le bot retenterait la sortie a chaque cycle.
+        """
+        port = self._live_port if self.mode == "live" else self._paper
+        port.positions.pop(symbol, None)
+
     async def place_order(
         self,
         symbol: str,
@@ -430,6 +451,13 @@ class CoinbaseClient:
             # rejette (INVALID_SIZE_PRECISION). round(qty,8) cassait sur HYPE/LINK
             # (pas plus grossier) -> on floor au pas autorise. Cf incident 14/07.
             base_size = await self._sell_base_size(symbol, qty)
+            # Le floor peut ramener un residu sous le pas a 0 : l'ordre serait
+            # rejete a coup sur. On le signale au lieu de l'envoyer. Cf 16/07.
+            if float(base_size) <= 0:
+                raise UnsellableDustError(
+                    f"{symbol} : qty {qty} sous le base_increment "
+                    f"-> base_size={base_size}, invendable"
+                )
             order_config = {
                 "market_market_ioc": {
                     "base_size": base_size

@@ -25,6 +25,7 @@ from agents import trading_state
 from agents import autoclose
 from agents.market_agent import MarketAgent
 from interfaces import notifier
+from interfaces.coinbase_client import UnsellableDustError
 from strategies.simple_ma  import Signal
 from strategies.trend_daily import analyze as trend_analyze
 
@@ -210,6 +211,14 @@ class TrendBot:
         avg_price = pos.get("avg_price", price)
         try:
             order = await self._coinbase.place_order(self.symbol, "sell", qty, force=True)
+        except UnsellableDustError as exc:
+            # Residu sous le pas de cotation : economiquement clos, mais Coinbase
+            # refusera toujours l'ordre. On le solde localement, sinon la sortie
+            # est retentee (et loguee en erreur) a chaque cycle, pour toujours.
+            self._coinbase.forget_position(self.symbol)
+            log.info("trend_bot_dust_dropped", bot_id=self.bot_id,
+                     qty=round(qty, 8), reason=str(exc))
+            return
         except Exception as exc:
             log.error("trend_bot_sell_failed", bot_id=self.bot_id, error=str(exc))
             await notifier.notify(f"❌ *Trend {self.symbol}* — sortie échouée\n`{exc}`")

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 
 import structlog
 from dotenv import load_dotenv
@@ -38,6 +39,8 @@ log = structlog.get_logger()
 
 # Délai entre le démarrage de chaque bot au boot (anti-burst 429 Coinbase).
 STARTUP_STAGGER_S = float(os.getenv("SWARM_STARTUP_STAGGER_S", "3.0"))
+# Fraicheur max du snapshot servi au dashboard (lecture seule, pas de trading).
+DASHBOARD_SNAPSHOT_TTL_S = float(os.getenv("DASHBOARD_SNAPSHOT_TTL_S", "5.0"))
 
 
 class BotSwarm:
@@ -50,6 +53,9 @@ class BotSwarm:
         # Ressources partagees entre tous les bots
         self._coinbase = CoinbaseClient()
         self._memory   = MemoryAgent()
+        # (monotonic, snapshot) du dernier fetch servi au dashboard. Cf.
+        # get_portfolio_snapshot : cache de lecture, jamais lu par les bots.
+        self._dash_snap_cache: tuple[float, dict] | None = None
         # Restaure l'avg_price d'une position re-adoptee apres reboot depuis la DB
         # (dernier achat connu) au lieu de l'ecraser avec le prix courant.
         self._coinbase.entry_price_resolver = self._memory.last_entry_price
@@ -360,7 +366,21 @@ class BotSwarm:
         return snap["total_usdc"]
 
     async def get_portfolio_snapshot(self) -> dict:
-        return await self._coinbase.get_portfolio_snapshot()
+        """Snapshot pour le DASHBOARD uniquement — cache TTL court.
+
+        Le dashboard poll /api/portfolio toutes les ~2s et chaque appel declenchait
+        un fetch Coinbase complet (soldes + un prix par position), soit ~500 fetches
+        par 10 min : de loin la premiere source d'appels API, et donc de 429.
+        Les bots ne passent PAS par ici (ils appellent le client directement) :
+        leurs decisions gardent des donnees fraiches.
+        """
+        now = time.monotonic()
+        cached = self._dash_snap_cache
+        if cached is not None and (now - cached[0]) < DASHBOARD_SNAPSHOT_TTL_S:
+            return cached[1]
+        snap = await self._coinbase.get_portfolio_snapshot()
+        self._dash_snap_cache = (now, snap)
+        return snap
 
     @property
     def coinbase(self) -> CoinbaseClient:
