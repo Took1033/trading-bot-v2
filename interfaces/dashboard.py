@@ -720,7 +720,7 @@ HTML = r"""<!DOCTYPE html>
           <div class="phase-item todo"><span class="chk">⬜</span> Backtest intégré au dashboard</div>
           <div class="phase-item todo"><span class="chk">⬜</span> Calibrage seuils ensemble sur données réelles</div>
           <div class="phase-item todo"><span class="chk">⬜</span> Optimisation paramètres (grid search)</div>
-          <div class="phase-item todo"><span class="chk">⬜</span> Walk-forward validation</div>
+          <div class="phase-item done"><span class="chk">✅</span> Walk-forward validation</div>
           <div class="phase-item todo"><span class="chk">⬜</span> Rapport P&amp;L / Sharpe / Max DD</div>
         </div>
 
@@ -730,8 +730,8 @@ HTML = r"""<!DOCTYPE html>
           <div class="phase-item done"><span class="chk">✅</span> Kill switch par bot + global</div>
           <div class="phase-item todo"><span class="chk">⬜</span> Audit sécurité complet</div>
           <div class="phase-item todo"><span class="chk">⬜</span> Rate limiting &amp; circuit breakers</div>
-          <div class="phase-item todo"><span class="chk">⬜</span> Alertes Telegram avancées (P&amp;L, drawdown)</div>
-          <div class="phase-item todo"><span class="chk">⬜</span> Monitoring externe (uptime, alertes)</div>
+          <div class="phase-item done"><span class="chk">✅</span> Alertes Telegram avancées (P&amp;L, drawdown)</div>
+          <div class="phase-item done"><span class="chk">✅</span> Monitoring externe (uptime, alertes)</div>
           <div class="phase-item todo"><span class="chk">⬜</span> Infra cloud déployable</div>
         </div>
       </div>
