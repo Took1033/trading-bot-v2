@@ -65,8 +65,14 @@ async def fetch_daily(symbol: str, days: int) -> list[float]:
     return [float(c[4]) for c in out]            # close = index 4
 
 
-def simulate(closes: list[float], trail: float) -> dict:
-    """Rejoue trend SMA + trailing optionnel. Compounding all-in, net de frais."""
+def simulate(closes: list[float], trail: float,
+             entry_buf: float = 0.0, exit_buf: float = 0.0) -> dict:
+    """Rejoue trend SMA + trailing optionnel, avec bande d'hysteresis optionnelle.
+
+    Compounding all-in, net de frais. entry_buf/exit_buf en fraction (0.01 = 1%) :
+    entre au-dessus de SMA*(1+entry_buf), sort sous SMA*(1-exit_buf). A 0 = flip
+    strict a la SMA (comportement historique).
+    """
     equity = 10_000.0
     in_pos = False
     entry  = peak = qty = 0.0
@@ -79,13 +85,13 @@ def simulate(closes: list[float], trail: float) -> dict:
         curve.append(qty * price if in_pos else equity)   # mark-to-market
 
         if not in_pos:
-            if price > sma:
+            if price > sma * (1 + entry_buf):
                 in_pos, entry, peak = True, price, price
                 qty = equity / price
         else:
             peak = max(peak, price)
             hit_trail = trail > 0 and (peak - price) / peak >= trail
-            hit_sma   = price < sma
+            hit_sma   = price < sma * (1 - exit_buf)
             if hit_trail or hit_sma:
                 equity = qty * price * (1 - FEE_RT)
                 wins, losses = (wins + 1, losses) if price >= entry else (wins, losses + 1)

@@ -27,6 +27,16 @@ log = structlog.get_logger()
 TREND_SMA_PERIOD = int(os.getenv("TREND_SMA_PERIOD", "50"))
 _DAILY_TTL_S     = int(os.getenv("TREND_DAILY_CACHE_S", "21600"))   # 6h (daily bouge 1x/j)
 
+# Bande d'hysteresis autour de la SMA (anti-whipsaw). Sans elle, le signal flippe
+# buy<->sell a la moindre traversee de la SMA : 17/19 sorties se sont declenchees a
+# <=0.5% sous la SMA, chaque A/R coutant ~2.4% de frais round-trip = la 1re source
+# de perte. Avec la bande : on n'ENTRE qu'au-dessus de SMA*(1+entry%) et on ne SORT
+# qu'en-dessous de SMA*(1-exit%) ; entre les deux on HOLD (garde la position). A 0
+# (defaut) = comportement historique inchange. A CALIBRER en backtest sur 5 ans
+# (run_backtest_hysteresis.py) AVANT d'activer en live.
+TREND_ENTRY_BUFFER_PCT = float(os.getenv("TREND_ENTRY_BUFFER_PCT", "0.0"))
+TREND_EXIT_BUFFER_PCT  = float(os.getenv("TREND_EXIT_BUFFER_PCT", "0.0"))
+
 # Cache des clotures journalieres par symbole : symbol -> (fetched_at, closes)
 _cache: dict[str, tuple[float, list[float]]] = {}
 
@@ -111,13 +121,17 @@ def compute_trend_signal(
     live_price: float,
     daily_closes: list[float],
     sma_period: int = TREND_SMA_PERIOD,
+    entry_buffer_pct: float = TREND_ENTRY_BUFFER_PCT,
+    exit_buffer_pct: float = TREND_EXIT_BUFFER_PCT,
 ) -> Signal:
     """
     Signal trend pur (fonction pure, testable) : compare le prix live a la SMA
-    des clotures journalieres.
-      - buy  si live_price > SMA  (tendance haussiere -> etre/rester long)
-      - sell si live_price < SMA  (tendance baissiere -> etre/rester flat)
+    des clotures journalieres, avec bande d'hysteresis optionnelle (anti-whipsaw).
+      - buy  si live_price > SMA*(1+entry%)  (franchit clairement par le haut)
+      - sell si live_price < SMA*(1-exit%)   (franchit clairement par le bas)
+      - hold dans la bande neutre (garde la position ouverte, reste flat sinon)
       - hold si pas assez de donnees
+    Avec entry%=exit%=0 (defaut) : flip strict a la SMA (comportement historique).
     """
     if len(daily_closes) < sma_period:
         return Signal("hold", 0.0,
@@ -135,12 +149,24 @@ def compute_trend_signal(
     except Exception:
         pass
 
-    if live_price > sma:
+    upper = sma * (1 + entry_buffer_pct / 100)
+    lower = sma * (1 - exit_buffer_pct / 100)
+    meta["entry_buffer_pct"] = entry_buffer_pct
+    meta["exit_buffer_pct"]  = exit_buffer_pct
+
+    if live_price > upper:
         return Signal("buy", 0.90,
                       f"Trend HAUSSIER : prix {live_price:.4f} > SMA{sma_period} {sma:.4f} ({dist_pct:+.1f}%)",
                       symbol, meta)
-    return Signal("sell", 0.90,
-                  f"Trend BAISSIER : prix {live_price:.4f} < SMA{sma_period} {sma:.4f} ({dist_pct:+.1f}%)",
+    if live_price < lower:
+        return Signal("sell", 0.90,
+                      f"Trend BAISSIER : prix {live_price:.4f} < SMA{sma_period} {sma:.4f} ({dist_pct:+.1f}%)",
+                      symbol, meta)
+    # Bande neutre (hysteresis) : ni entree ni sortie. Garde la position si ouverte,
+    # reste flat sinon -> supprime les allers-retours ruineux autour de la SMA.
+    return Signal("hold", 0.50,
+                  f"Trend NEUTRE : prix {live_price:.4f} dans la bande "
+                  f"[-{exit_buffer_pct:.1f}%,+{entry_buffer_pct:.1f}%] SMA{sma_period} {sma:.4f} ({dist_pct:+.1f}%)",
                   symbol, meta)
 
 
