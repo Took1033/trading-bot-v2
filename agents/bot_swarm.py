@@ -40,7 +40,11 @@ log = structlog.get_logger()
 # Délai entre le démarrage de chaque bot au boot (anti-burst 429 Coinbase).
 STARTUP_STAGGER_S = float(os.getenv("SWARM_STARTUP_STAGGER_S", "3.0"))
 # Fraicheur max du snapshot servi au dashboard (lecture seule, pas de trading).
-DASHBOARD_SNAPSHOT_TTL_S = float(os.getenv("DASHBOARD_SNAPSHOT_TTL_S", "5.0"))
+# 15s : le dashboard poll ~2s mais on ne refetch Coinbase qu'une fois par TTL.
+# A 5s ca faisait ~12 snapshots/min (soldes + 1 prix/position) = 1re source d'appels
+# API et de 429. 15s divise cette charge par ~3 sans impact visible (bot parque,
+# check horaire). Les bots ne lisent PAS ce cache -> leurs decisions restent fraiches.
+DASHBOARD_SNAPSHOT_TTL_S = float(os.getenv("DASHBOARD_SNAPSHOT_TTL_S", "15.0"))
 
 
 class BotSwarm:

@@ -39,6 +39,16 @@ ROUND_TRIP_FEE_PCT = 2 * float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.006"))
 # Les "dust" en dessous sont ignorees (pas vendues, pas comptabilisees).
 LIVE_MIN_TRACK_USDC = float(os.getenv("LIVE_MIN_TRACK_USDC", "5.0"))
 
+# Devises a ignorer au snapshot live : dust orphelin sans paire -USDC tradable
+# (ex. ACX). Coinbase renvoie 400 "invalid product_id" a chaque tentative de prix,
+# ce qui inonde les logs d'erreurs (alerte watchdog). Pre-seed la blacklist runtime
+# pour ne jamais interroger le SDK sur ces symboles. Liste separee par des virgules.
+LIVE_IGNORE_CURRENCIES = {
+    c.strip().upper()
+    for c in os.getenv("LIVE_IGNORE_CURRENCIES", "").split(",")
+    if c.strip()
+}
+
 # Spread max accepte avant ordre (en %). Si bid/ask trop large = marche illiquide.
 MAX_SPREAD_PCT = float(os.getenv("LIVE_MAX_SPREAD_PCT", "0.15"))
 
@@ -172,6 +182,12 @@ class CoinbaseClient:
         # BotSwarm depuis la DB, pour restaurer l'avg_price d'une position
         # re-adoptee apres reboot au lieu de l'ecraser avec le prix courant.
         self.entry_price_resolver = None
+        # Produits inexistants chez Coinbase (pas de paire -USDC tradable). Des qu'un
+        # symbole renvoie "invalid product_id", on l'ajoute ici et on ne rappelle plus
+        # le SDK a chaque tick — sinon le snapshot live spamme des centaines d'erreurs
+        # 400/h (le SDK loggue AVANT qu'on attrape l'exception). Pre-seed avec les dust
+        # orphelins deja connus via LIVE_IGNORE_CURRENCIES (ex. ACX).
+        self._invalid_products: set[str] = {f"{c}-USDC" for c in LIVE_IGNORE_CURRENCIES}
 
         if self.mode == "live":
             self._init_live()
@@ -277,6 +293,10 @@ class CoinbaseClient:
 
     async def _live_price(self, symbol: str) -> float:
         """Prix via Advanced Trade API (mid bid/ask), appel async-safe."""
+        if symbol in self._invalid_products:
+            # Paire deja identifiee comme inexistante : on n'appelle PAS le SDK
+            # (il loggue une erreur 400 a chaque fois). L'appelant gere l'exception.
+            raise ValueError(f"produit invalide (ignore): {symbol}")
         try:
             result = await self._run_sync(
                 self._real_client.get_best_bid_ask,
@@ -289,8 +309,16 @@ class CoinbaseClient:
             log.debug("live_price_fetched", symbol=symbol, bid=bid, ask=ask, mid=mid)
             return mid
         except Exception as exc:
-            log.warning("live_price_fallback", symbol=symbol, error=str(exc))
-            # Fallback sur l'API publique si le SDK echoue
+            msg = str(exc)
+            if "invalid product_id" in msg or "INVALID_ARGUMENT" in msg:
+                # Paire inexistante chez Coinbase (dust orphelin type ACX-USDC) :
+                # on blackliste pour ne plus jamais rappeler le SDK sur ce symbole.
+                # Une seule erreur SDK loggee (celle-ci), puis silence.
+                self._invalid_products.add(symbol)
+                log.warning("price_product_blacklisted", symbol=symbol)
+                raise
+            log.warning("live_price_fallback", symbol=symbol, error=msg)
+            # Fallback sur l'API publique si le SDK echoue (erreur transitoire)
             return await self._paper_price(symbol)
 
     # ─────────────────────────────────────────────────────────────────────────
