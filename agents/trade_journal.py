@@ -25,6 +25,10 @@ log = structlog.get_logger()
 DB_PATH     = os.getenv("DB_PATH", "memory/trading.db")
 CSV_PATH    = Path(DB_PATH).parent / "trade_journal.csv"
 INTERVAL_S  = int(os.getenv("JOURNAL_INTERVAL_S", "3600"))    # 1h par defaut
+# Frais taker PAR COTE (meme source que coinbase_client.ROUND_TRIP_FEE_PCT). Le
+# journal loggue un fee_estimate par trade = une cote. L'ancien 0.012 hardcode
+# sur-estimait de 60% (2x le taker reel 0.75%) et faussait toute analyse de frais.
+TAKER_FEE_PCT = float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.0075"))
 
 
 def _db() -> sqlite3.Connection:
@@ -66,7 +70,7 @@ def export_journal() -> int:
                 qty   = float(meta.get("qty",   0))
                 price = float(meta.get("price", 0))
                 value = qty * price
-                fee   = value * 0.012   # round-trip estimate
+                fee   = value * TAKER_FEE_PCT   # taker par cote (round-trip = 2x)
 
                 writer.writerow({
                     "timestamp":         row["timestamp"],

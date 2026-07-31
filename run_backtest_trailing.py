@@ -25,13 +25,16 @@ except Exception:
     pass
 
 import asyncio
+import os
 import sys
 import time
 
 import aiohttp
 
 SMA    = 50
-FEE_RT = 0.012                        # frais aller-retour estimes (taker x2)
+# Frais aller-retour estimes. Defaut 1.2% (taker 0.6%x2), mais le live paie ~2.4%
+# (1.2%/cote) : surcharger via BACKTEST_FEE_RT=0.024 pour un chiffrage realiste.
+FEE_RT = float(os.getenv("BACKTEST_FEE_RT", "0.012"))
 TRAILS = [0.0, 0.10, 0.15, 0.20, 0.25]
 DEFAULT_SYMBOLS = ["BTC-USD", "ETH-USD"]   # univers ou l'edge trend est valide
 
