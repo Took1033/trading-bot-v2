@@ -178,6 +178,9 @@ class CoinbaseClient:
         self._real_client = None
         self._session    = None               # session aiohttp persistante
         self._loop       = None               # boucle asyncio courante
+        # Dernier snapshot live SAIN — repli quand Coinbase renvoie une liste de
+        # comptes incomplete (lecture degradee) au lieu d'afficher un faux 0.
+        self._last_good_snapshot: dict | None = None
         # Optionnel : resolver(symbol)->prix d'entree connu (ou None). Injecte par
         # BotSwarm depuis la DB, pour restaurer l'avg_price d'une position
         # re-adoptee apres reboot au lieu de l'ecraser avec le prix courant.
@@ -713,6 +716,20 @@ class CoinbaseClient:
 
         usdc_balance = balances.get("USDC", 0.0)
 
+        # Anti-lecture-degradee : sous forte charge de polling, Coinbase renvoie
+        # parfois une liste de comptes INCOMPLETE (que le dust, sans USDC ni les
+        # actifs suivis) SANS lever d'erreur. Un tel snapshot afficherait 0$ (faux),
+        # fausserait le sizing et effacerait le suivi des positions. Si la lecture est
+        # clairement degradee et qu'on a un snapshot sain recent, on le renvoie tel quel.
+        tracked_ccy = {s.split("-")[0] for s in self._live_port.positions}
+        if (self._last_good_snapshot is not None
+                and usdc_balance < 1e-8
+                and not (tracked_ccy & balances.keys())):
+            log.warning("snapshot_degraded_using_last_good",
+                        n_balances=len(balances),
+                        last_total=round(self._last_good_snapshot.get("total_usdc", 0.0), 2))
+            return self._last_good_snapshot
+
         # Construire les positions depuis les soldes reels
         positions_out: dict[str, dict] = {}
         total_usdc = usdc_balance
@@ -804,7 +821,7 @@ class CoinbaseClient:
         initial = float(os.getenv("LIVE_INITIAL_USDC", str(usdc_balance)))
         pnl_pct = (total_usdc - initial) / initial * 100 if initial > 0 else 0.0
 
-        return {
+        snapshot = {
             "total_usdc":   total_usdc,
             "usdc_balance": usdc_balance,
             "positions":    positions_out,
@@ -812,6 +829,11 @@ class CoinbaseClient:
             "mode":         self.mode,
             "timestamp":    datetime.now(timezone.utc).isoformat(),
         }
+        # Reference saine pour le repli anti-lecture-degradee (cf. plus haut) : on ne
+        # memorise QUE si la lecture est plausible, pour ne jamais figer un faux 0.
+        if total_usdc > 0 or positions_out:
+            self._last_good_snapshot = snapshot
+        return snapshot
 
     def _live_snapshot_local(self) -> dict:
         """Snapshot de secours depuis les donnees locales (si API indisponible)."""
