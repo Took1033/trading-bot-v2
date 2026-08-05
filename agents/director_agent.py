@@ -128,6 +128,17 @@ class DirectorAgent:
         now   = time.time()
         value = await self.swarm.get_portfolio_total()
 
+        # Garde-fou anti-glitch de lecture : un snapshot a 0 (ou une chute > 50% du
+        # pic en un seul tick) trahit un get_accounts incomplet cote Coinbase, PAS un
+        # vrai drawdown — un portefeuille reel ne s'evapore pas en 30s, et le kill
+        # switch se serait deja declenche a 8%. On ignore ce tick (ni peak, ni kill
+        # switch, ni fenetre horaire) pour ne jamais declencher de faux kill switch.
+        if value <= 0 or (self._peak_value and value < self._peak_value * 0.5):
+            log.warning("snapshot_value_implausible_skipped",
+                        value=round(value, 2),
+                        peak=round(self._peak_value or 0, 2))
+            return
+
         # Init au premier check
         if self._initial_value is None:
             self._initial_value = value

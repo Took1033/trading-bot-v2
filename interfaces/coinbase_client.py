@@ -675,8 +675,23 @@ class CoinbaseClient:
         Synchronise aussi le suivi local avec les vrais soldes.
         """
         try:
-            accounts_resp = await self._run_sync(self._real_client.get_accounts)
-            accounts      = accounts_resp.accounts
+            # PAGINATION obligatoire : Coinbase renvoie ~49 comptes/page. Un compte
+            # qui a detenu beaucoup de devises en a bien plus (1 compte/actif, meme a
+            # 0). Sans pagination, les gros soldes (USDC/BTC/ETH) peuvent tomber au-dela
+            # de la 1re page -> balances incompletes -> total_usdc=0 -> faux drawdown
+            # 100% -> kill switch a tort. On suit le curseur jusqu'a tout recuperer.
+            accounts = []
+            cursor   = ""
+            for _ in range(20):   # garde-fou anti-boucle (max ~5000 comptes)
+                resp = await self._run_sync(
+                    self._real_client.get_accounts, limit=250, cursor=cursor
+                )
+                accounts.extend(getattr(resp, "accounts", None) or [])
+                if not getattr(resp, "has_next", False):
+                    break
+                cursor = getattr(resp, "cursor", "") or ""
+                if not cursor:
+                    break
         except Exception as exc:
             log.error("live_snapshot_failed", error=str(exc))
             # Fallback : retourne les donnees locales
