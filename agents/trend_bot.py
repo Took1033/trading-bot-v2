@@ -46,6 +46,11 @@ TREND_TRAIL_PCT     = float(os.getenv("TREND_TRAILING_STOP_PCT", "0") or "0")
 TREND_ALERT_GAIN_PCT = float(os.getenv("TREND_ALERT_GAIN_PCT", "10.0"))
 # Taker par cote (meme source que coinbase_client) pour chiffrer le P&L NET en notif.
 TAKER_FEE_PCT        = float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.0075"))
+# Filtre de regime macro (OFF par defaut) : n'ouvre les ALTS que si l'actif directeur
+# (BTC) est lui-meme haussier (prix > sa SMA daily). Evite d'acheter des alts en plein
+# bear global — la ou AVAX/DOT/LTC saignent au backtest. A VALIDER avant d'activer.
+REGIME_FILTER_ENABLED = os.getenv("REGIME_FILTER_ENABLED", "false").lower() in ("true", "1", "yes")
+REGIME_SYMBOL         = os.getenv("REGIME_FILTER_SYMBOL", "BTC-USDC")
 
 
 class TrendBot:
@@ -184,12 +189,34 @@ class TrendBot:
                 log.info("trend_entry_blocked_kill_switch", bot_id=self.bot_id,
                          reason=trading_state.get_kill_reason())
                 return
+            # Filtre de regime : on n'ouvre les ALTS que si le marche directeur (BTC)
+            # est haussier. Les bots BTC ne se filtrent pas eux-memes. OFF par defaut.
+            if (REGIME_FILTER_ENABLED and self.symbol != REGIME_SYMBOL
+                    and not await self._regime_is_bullish()):
+                log.info("trend_entry_blocked_regime", bot_id=self.bot_id,
+                         regime=REGIME_SYMBOL)
+                return
             await self._enter(live_price, sig)
         elif sig.action == "sell" and have_pos:
             await self._exit(live_price, pos, sig)
         else:
             log.debug("trend_bot_hold", bot_id=self.bot_id,
                       action=sig.action, have_pos=have_pos)
+
+    async def _regime_is_bullish(self) -> bool:
+        """True si l'actif directeur (BTC) est haussier (prix > sa SMA daily). Filtre
+        macro pour les alts. Fail-open : erreur / donnees insuffisantes -> True."""
+        try:
+            from strategies.trend_daily import fetch_daily_closes, TREND_SMA_PERIOD
+            closes = await fetch_daily_closes(REGIME_SYMBOL)
+            if len(closes) < TREND_SMA_PERIOD:
+                return True
+            sma   = sum(closes[-TREND_SMA_PERIOD:]) / TREND_SMA_PERIOD
+            price = await self._coinbase.get_price(REGIME_SYMBOL)
+            return price >= sma
+        except Exception as exc:
+            log.debug("regime_check_failed", error=str(exc))
+            return True
 
     # ── Entree / sortie ──────────────────────────────────────────────────────
     async def _enter(self, price: float, sig) -> None:
