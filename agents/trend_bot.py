@@ -40,6 +40,12 @@ TREND_MIN_USDC      = float(os.getenv("TREND_MIN_USDC", "5.0"))       # mise min
 # depuis l'entree). Verrouille une partie du gain ouvert ; reduit l'edge trend pur
 # (on se fait sortir de certains gros runs). A activer en conscience.
 TREND_TRAIL_PCT     = float(os.getenv("TREND_TRAILING_STOP_PCT", "0") or "0")
+# Alerte "gros gain ouvert" : notif Telegram quand une position depasse +X% depuis
+# l'entree (defaut 10%), pour decider de tenir (surfer) ou couper. Envoyee UNE fois
+# par position (re-armee a la sortie). 0 = desactive.
+TREND_ALERT_GAIN_PCT = float(os.getenv("TREND_ALERT_GAIN_PCT", "10.0"))
+# Taker par cote (meme source que coinbase_client) pour chiffrer le P&L NET en notif.
+TAKER_FEE_PCT        = float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.0075"))
 
 
 class TrendBot:
@@ -57,6 +63,7 @@ class TrendBot:
         self._last_trade_ts: float = 0.0
         self._signal_streak: dict  = {"action": None, "count": 0}
         self._peak_price:    float = 0.0   # plus haut depuis l'entree (trailing-stop)
+        self._gain_alerted:  bool  = False  # alerte "+X%" deja envoyee pour cette position
 
         log.info("trend_bot_ready", bot_id=self.bot_id, symbol=symbol,
                  sma_check_s=TREND_CHECK_S, position_pct=TREND_POSITION_PCT)
@@ -116,6 +123,19 @@ class TrendBot:
             self._peak_price = max(self._peak_price, live_price)
             avg = pos.get("avg_price", 0.0) or 0.0
 
+            # Alerte "gros gain ouvert" (une fois par position) : laisse Brice decider
+            # de tenir la vague ou de couper. Ne force aucune action.
+            if TREND_ALERT_GAIN_PCT > 0 and avg > 0 and not self._gain_alerted:
+                gain = (live_price - avg) / avg * 100
+                if gain >= TREND_ALERT_GAIN_PCT:
+                    self._gain_alerted = True
+                    log.info("trend_gain_alert", bot_id=self.bot_id, gain_pct=round(gain, 2))
+                    await notifier.notify(
+                        f"🚀 *{self.symbol}* — position à `+{gain:.1f}%`\n"
+                        f"Entrée `{avg:,.4f}` → `{live_price:,.4f}`\n"
+                        f"_Tendance en cours : tenir pour surfer, ou verrouiller le gain ?_"
+                    )
+
             ac = autoclose.get(self.bot_id)
             if ac.get("active") and avg > 0:
                 thr = float(ac.get("threshold_pct", 0) or 0)
@@ -156,7 +176,8 @@ class TrendBot:
                     await self._exit(live_price, pos, trail_sig)
                     return
         else:
-            self._peak_price = 0.0
+            self._peak_price   = 0.0
+            self._gain_alerted = False   # re-arme l'alerte pour la prochaine position
 
         if sig.action == "buy" and not have_pos:
             if trading_state.is_kill_switch_active():
@@ -225,6 +246,11 @@ class TrendBot:
             return
 
         pnl_pct = ((price - avg_price) / avg_price * 100) if avg_price > 0 else 0.0
+        # P&L NET en USDC : brut - frais taker aller-retour (achat + vente)
+        gross_usdc = qty * (price - avg_price)
+        fee_usdc   = TAKER_FEE_PCT * qty * (avg_price + price)
+        net_usdc   = gross_usdc - fee_usdc
+        self._gain_alerted  = False   # re-arme l'alerte gain
         self._last_trade_ts = time.time()
         self._memory.record_decision(
             role="trend_bot", task_type="order", symbol=self.symbol, action="sell",
@@ -232,10 +258,11 @@ class TrendBot:
             metadata=f'{{"order_id":"{order.order_id}","price":{round(price,4)},"qty":{round(qty,8)}}}',
         )
         self._memory.record_snapshot(await self._coinbase.get_portfolio_snapshot())
-        emoji = "🟢" if pnl_pct >= 0 else "🔴"
+        emoji = "🟢" if net_usdc >= 0 else "🔴"
         await notifier.notify(
             f"📉 *TREND — Sortie* `{self.symbol}`\n"
-            f"Vente `{qty:.6f}` @ `{price:,.4f}` | P&L {emoji} `{pnl_pct:+.1f}%`\n"
+            f"Vente `{qty:.6f}` @ `{price:,.4f}`\n"
+            f"P&L {emoji} `{pnl_pct:+.1f}%` = `{net_usdc:+.2f}` USDC net _(frais `{fee_usdc:.2f}`)_\n"
             f"_{sig.reasoning}_"
         )
         log.info("trend_bot_exited", bot_id=self.bot_id, qty=round(qty, 8),
