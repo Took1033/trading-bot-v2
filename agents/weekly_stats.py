@@ -37,6 +37,9 @@ PAPER_LIVE_SPLIT = float(os.getenv("PAPER_LIVE_SPLIT_USDC", "1000"))
 WEEKLY_DOW   = int(os.getenv("WEEKLY_STATS_DOW_UTC",  "0"))    # 0=Lundi
 WEEKLY_HOUR  = int(os.getenv("WEEKLY_STATS_HOUR_UTC", "9"))
 WEEKLY_MIN   = int(os.getenv("WEEKLY_STATS_MIN_UTC",  "5"))    # +5min apres daily
+# Taker par cote, pour estimer les frais 7j (upper bound : si le maker fille, le reel
+# est plus bas -> la baisse de cette ligne = l'impact du maker, semaine apres semaine).
+TAKER_FEE_PCT = float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.0075"))
 
 
 def _db() -> sqlite3.Connection:
@@ -178,7 +181,17 @@ def _compute_7d_metrics() -> dict:
     pnl_7d_usdc = (values[-1] - values[0]) if len(values) >= 2 else None
     pnl_7d_pct  = (pnl_7d_usdc / values[0] * 100) if pnl_7d_usdc and values[0] > 0 else None
 
+    # Frais estimes 7j : valeurs echangees (buys + sells) x taker (upper bound).
+    fees_7d = 0.0
+    for row in buys + sells:
+        try:
+            meta = json.loads(row["metadata"]) if row["metadata"] else {}
+            fees_7d += abs(float(meta.get("qty", 0)) * float(meta.get("price", 0))) * TAKER_FEE_PCT
+        except Exception:
+            continue
+
     return {
+        "fees_7d":      round(fees_7d, 2),
         "n_trades":     n_trades,
         "n_wins":       n_wins,
         "win_rate":     win_rate,
@@ -222,6 +235,8 @@ def _format_stats(m: dict) -> str:
         )
     if m["current_value"] is not None:
         lines.append(f"  Valeur        : `{m['current_value']:.2f}` USDC")
+    if m.get("fees_7d"):
+        lines.append(f"  Frais 7j (est): `{m['fees_7d']:.2f}` USDC _(maker → plus bas)_")
     if m["max_drawdown"] > 0:
         emoji = "🔴" if m["max_drawdown"] > 5 else "🟡" if m["max_drawdown"] > 2 else "🟢"
         lines.append(f"  Max drawdown  : {emoji} `{m['max_drawdown']:.2f}%`")
