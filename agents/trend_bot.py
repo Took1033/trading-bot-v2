@@ -40,6 +40,11 @@ TREND_MIN_USDC      = float(os.getenv("TREND_MIN_USDC", "5.0"))       # mise min
 # depuis l'entree). Verrouille une partie du gain ouvert ; reduit l'edge trend pur
 # (on se fait sortir de certains gros runs). A activer en conscience.
 TREND_TRAIL_PCT     = float(os.getenv("TREND_TRAILING_STOP_PCT", "0") or "0")
+# Stop catastrophe (OFF par defaut) : coupe une position qui perd plus de X% depuis
+# l'entree, AVANT que la SMA (qui retarde) ne rattrape un krach. Filet pour une
+# exposition elevee ; ne gene pas le trend normal (une vague casse la SMA bien avant
+# -15/-20%). A valider en backtest (run_backtest_stop.py) avant d'activer.
+TREND_STOP_LOSS_PCT = float(os.getenv("TREND_STOP_LOSS_PCT", "0") or "0")
 # Alerte "gros gain ouvert" : notif Telegram quand une position depasse +X% depuis
 # l'entree (defaut 10%), pour decider de tenir (surfer) ou couper. Envoyee UNE fois
 # par position (re-armee a la sortie). 0 = desactive.
@@ -127,6 +132,17 @@ class TrendBot:
         if have_pos:
             self._peak_price = max(self._peak_price, live_price)
             avg = pos.get("avg_price", 0.0) or 0.0
+
+            # Stop catastrophe (prioritaire) : coupe avant que la SMA lente ne
+            # rattrape un krach. OFF par defaut ; ne se declenche que sur chute brutale.
+            if TREND_STOP_LOSS_PCT > 0 and avg > 0 and live_price <= avg * (1 - TREND_STOP_LOSS_PCT / 100):
+                loss = (live_price - avg) / avg * 100
+                stop_sig = Signal(
+                    "sell", 0.98,
+                    f"STOP CATASTROPHE : {loss:.1f}% (seuil -{TREND_STOP_LOSS_PCT:.0f}%)",
+                    self.symbol, {"loss_pct": round(loss, 2)})
+                await self._exit(live_price, pos, stop_sig)
+                return
 
             # Alerte "gros gain ouvert" (une fois par position) : laisse Brice decider
             # de tenir la vague ou de couper. Ne force aucune action.
