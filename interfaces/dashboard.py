@@ -156,6 +156,13 @@ HTML = r"""<!DOCTYPE html>
   .bot-stat .value { color: #f0f0f0; font-family: "Consolas", monospace; }
   .pos-up   { color: #3fd08a !important; }
   .pos-down { color: #ff6d7d !important; }
+  /* Hierarchie gain/perte forte : accent lateral colore + P&L proeminent */
+  .bot-card.profit { box-shadow: inset 4px 0 0 #22e07a; border-color: #2c4a3a; }
+  .bot-card.loss   { box-shadow: inset 4px 0 0 #ff4d5e; border-color: #4a2c33; }
+  .bot-pnl { font-size: 1.5em; font-weight: 800; font-family: "Consolas", monospace;
+             letter-spacing: -.02em; margin: 2px 0 10px; }
+  .bot-pnl.pos-up   { color: #22e07a !important; }
+  .bot-pnl.pos-down { color: #ff4d5e !important; }
 
   /* Cartes principales */
   .top-grid { display: grid; gap: 14px;
@@ -979,7 +986,9 @@ async function refresh() {
       if (!b.paused && !killActive) nActive++;
 
       // Card
-      const cls = 'bot-card' + (hasPos ? ' has-position' : '') + (b.paused ? ' paused' : '');
+      const cls = 'bot-card'
+        + (hasPos ? (pnlPct != null && pnlPct >= 0 ? ' profit' : ' loss') : '')
+        + (b.paused ? ' paused' : '');
       // Infos dynamiques (Bot Dynamique)
       let dynInfo = '';
       if (b.bot_id === 'dynamique' && b.dynamic_perfs && Object.keys(b.dynamic_perfs).length) {
@@ -1044,7 +1053,7 @@ async function refresh() {
         <div class="bot-stat"><span class="label">Entrée</span><span class="value">$${fmt(b.position.avg_price)}</span></div>
         <div class="bot-stat"><span class="label">Engagé</span><span class="value">$${fmt(b.position.qty * b.position.avg_price)}</span></div>
         <div class="bot-stat"><span class="label">Valeur actuelle</span><span class="value">${b.current_price ? '$' + fmt(b.position.qty * b.current_price) : '—'}</span></div>
-        <div class="bot-stat"><span class="label">P&L live</span><span class="value ${pnlPct!=null&&pnlPct>=0?'pos-up':'pos-down'}">${fmtPct(pnlPct)}</span></div>
+        <div class="bot-pnl ${pnlPct!=null&&pnlPct>=0?'pos-up':'pos-down'}">${pnlPct!=null&&pnlPct>=0?'▲':'▼'} ${fmtPct(pnlPct)} <span style="font-size:.5em;font-weight:600;opacity:.65;letter-spacing:0;">P&L live</span></div>
         ` : ''}
         ${dynInfo}
         <canvas class="sparkline" data-botid="${b.bot_id}" width="260" height="44"></canvas>
