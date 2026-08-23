@@ -147,7 +147,19 @@ HTML = r"""<!DOCTYPE html>
               border-radius: 8px; padding: 16px; transition: border-color 0.3s; }
   .bot-card.has-position { border-color: #3fd08a; }
   .bot-card.paused { opacity: 0.5; border-color: #5a3a1f; }
-  .bot-card h3 { font-size: 1em; color: #e8e8e8; margin-bottom: 4px; }
+  .bot-card h3 { font-size: 1em; color: #e8e8e8; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+  .bot-menu { display: none; margin-top: 8px; border-top: 1px solid #1f2530; padding-top: 8px; }
+  .btn-menu { background: none; border: none; color: #6a7789; cursor: pointer; font-size: 1.2em; line-height: 1; padding: 0 4px; border-radius: 6px; }
+  .btn-menu:hover { color: #e8e8e8; background: rgba(255,255,255,.06); }
+  /* Pre-adaptation mobile : colonne unique, cibles tactiles plus grandes */
+  @media (max-width: 560px) {
+    body { padding: 10px; }
+    .grid { grid-template-columns: 1fr !important; }
+    .bot-card { padding: 14px; }
+    .btn, .btn-small, .btn-menu { min-height: 34px; padding: 7px 11px; }
+    .pair-ctrl { flex-direction: column; align-items: stretch; }
+    .pair-ctrl input, .ac-input { width: 100% !important; }
+  }
   .bot-card .symbol { color: #6a7789; font-size: 0.85em; margin-bottom: 12px; }
   .bot-stat { display: flex; justify-content: space-between;
               padding: 5px 0; font-size: 0.88em; border-bottom: 1px solid #1f2530; }
@@ -159,8 +171,8 @@ HTML = r"""<!DOCTYPE html>
   /* Hierarchie gain/perte forte : accent lateral colore + P&L proeminent */
   .bot-card.profit { box-shadow: inset 4px 0 0 #22e07a; border-color: #2c4a3a; }
   .bot-card.loss   { box-shadow: inset 4px 0 0 #ff4d5e; border-color: #4a2c33; }
-  .bot-pnl { font-size: 1.5em; font-weight: 800; font-family: "Consolas", monospace;
-             letter-spacing: -.02em; margin: 2px 0 10px; }
+  .bot-pnl { font-size: 1.25em; font-weight: 800; font-family: "Consolas", monospace;
+             letter-spacing: -.02em; margin: 2px 0 9px; }
   .bot-pnl.pos-up   { color: #22e07a !important; }
   .bot-pnl.pos-down { color: #ff4d5e !important; }
 
@@ -890,6 +902,13 @@ function renderMindmap(swarm, killActive) {
   });
 }
 
+const openMenus = new Set();
+function toggleMenu(id) {
+  if (openMenus.has(id)) openMenus.delete(id); else openMenus.add(id);
+  const m = document.getElementById('menu-' + id);
+  if (m) m.style.display = openMenus.has(id) ? 'block' : 'none';
+}
+
 async function renderParams() {
   const c = await fetch('/api/config').then(r => r.json()).catch(() => null);
   if (!c) return;
@@ -1043,7 +1062,9 @@ async function refresh() {
       grid.innerHTML += `<div class="${cls}">
         <h3>${b.name}
           <span style="color:#6a7789;font-size:0.75em;">${(b.weight*100).toFixed(0)}%</span>
-          <a class="btn btn-open" href="/bot/${b.bot_id}" target="_blank">🔍 Ouvrir</a>
+          <span style="flex:1;"></span>
+          <a class="btn btn-open" href="/bot/${b.bot_id}" target="_blank">🔍</a>
+          <button class="btn-menu" onclick="toggleMenu('${b.bot_id}')" title="Contrôles">⋯</button>
         </h3>
         <div class="symbol">${b.symbol}</div>
         <div class="bot-stat"><span class="label">Statut</span><span class="value">${state === 'kill' ? '🚨 KILL' : b.paused ? '⏸ pausé' : '▶️ actif'}</span></div>
@@ -1057,10 +1078,13 @@ async function refresh() {
         ` : ''}
         ${dynInfo}
         <canvas class="sparkline" data-botid="${b.bot_id}" width="260" height="44"></canvas>
-        <div class="bot-actions">${pauseBtn}${closeBtn}</div>
-        ${pairCtrl}${acCtrl}
+        <div class="bot-menu" id="menu-${b.bot_id}">
+          <div class="bot-actions">${pauseBtn}${closeBtn}</div>
+          ${pairCtrl}${acCtrl}
+        </div>
       </div>`;
     });
+    openMenus.forEach(id => { const m = document.getElementById('menu-' + id); if (m) m.style.display = 'block'; });
   }
   document.getElementById('n-active').textContent = nActive;
   if (swarm) document.getElementById('n-total').textContent = swarm.length;
