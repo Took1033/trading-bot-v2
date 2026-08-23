@@ -525,18 +525,17 @@ HTML = r"""<!DOCTYPE html>
       <span class="params-src">source : .env — lecture seule ici</span>
     </div>
     <div class="params-grid">
-      <div class="pp"><span class="ppl">Confiance min</span><span class="ppv">0.65</span></div>
-      <div class="pp"><span class="ppl">Score ensemble min</span><span class="ppv">1.20</span></div>
-      <div class="pp"><span class="ppl">Filtre volatilité</span><span class="ppv">0.05</span></div>
-      <div class="pp"><span class="ppl">Stop-loss</span><span class="ppv">1.5 × ATR</span></div>
-      <div class="pp"><span class="ppl">Take-profit</span><span class="ppv">2.5 × ATR</span></div>
-      <div class="pp"><span class="ppl">Exposition max</span><span class="ppv warn">40%</span></div>
-      <div class="pp"><span class="ppl">Taille / trade</span><span class="ppv">5%</span></div>
-      <div class="pp"><span class="ppl">Ordre min</span><span class="ppv">$1.00</span></div>
-      <div class="pp"><span class="ppl">Spread max</span><span class="ppv">0.15%</span></div>
-      <div class="pp"><span class="ppl">Autoclose</span><span class="ppv">trailing 5%</span></div>
-      <div class="pp"><span class="ppl">SMA tendance</span><span class="ppv">50</span></div>
-      <div class="pp"><span class="ppl">Journal CSV</span><span class="ppv">5 min</span></div>
+      <div class="pp"><span class="ppl">Taille / trade</span><span class="ppv" id="cfg-pos">—</span></div>
+      <div class="pp"><span class="ppl">Exposition max</span><span class="ppv" id="cfg-exp">—</span></div>
+      <div class="pp"><span class="ppl">SMA tendance</span><span class="ppv" id="cfg-sma">—</span></div>
+      <div class="pp"><span class="ppl">Bande de sortie</span><span class="ppv" id="cfg-buf">—</span></div>
+      <div class="pp"><span class="ppl">Stop catastrophe</span><span class="ppv" id="cfg-stop">—</span></div>
+      <div class="pp"><span class="ppl">Fréquence check</span><span class="ppv" id="cfg-check">—</span></div>
+      <div class="pp"><span class="ppl">Frais taker</span><span class="ppv" id="cfg-fee">—</span></div>
+      <div class="pp"><span class="ppl">Entrées maker</span><span class="ppv" id="cfg-maker">—</span></div>
+      <div class="pp"><span class="ppl">Filtre régime</span><span class="ppv" id="cfg-regime">—</span></div>
+      <div class="pp"><span class="ppl">Ordre min</span><span class="ppv" id="cfg-minord">—</span></div>
+      <div class="pp"><span class="ppl">Spread max</span><span class="ppv" id="cfg-spread">—</span></div>
     </div>
   </div>
 
@@ -884,7 +883,25 @@ function renderMindmap(swarm, killActive) {
   });
 }
 
+async function renderParams() {
+  const c = await fetch('/api/config').then(r => r.json()).catch(() => null);
+  if (!c) return;
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  set('cfg-pos',    c.position_pct.toFixed(0) + '%');
+  set('cfg-exp',    c.max_exposure.toFixed(0) + '%');
+  set('cfg-sma',    'SMA' + c.sma_period);
+  set('cfg-buf',    c.exit_buffer.toFixed(1) + '%');
+  set('cfg-stop',   c.stop_loss > 0 ? '-' + c.stop_loss.toFixed(0) + '%' : 'OFF');
+  set('cfg-check',  c.check_min.toFixed(0) + ' min');
+  set('cfg-fee',    c.taker_fee.toFixed(2) + '%');
+  set('cfg-maker',  c.maker ? 'ON' : 'OFF');
+  set('cfg-regime', c.regime ? 'ON' : 'OFF');
+  set('cfg-minord', '$' + c.min_order.toFixed(2));
+  set('cfg-spread', c.max_spread.toFixed(2) + '%');
+}
+
 async function refresh() {
+  renderParams();
   const port = await fetch('/api/director').then(r => r.json()).catch(() => null);
   if (port?.round_trip_fee_pct != null) FEE_RT = port.round_trip_fee_pct;
   // Pas de fallback 'paper' : afficher faussement PAPER en live est dangereux.
@@ -2204,6 +2221,30 @@ async def handle_release(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "action": "released"})
 
 
+async def handle_config(request: web.Request) -> web.Response:
+    """Config live (relit le .env a chaque appel) pour la carte 'Parametres & seuils'."""
+    def fnum(k: str, d: str) -> float:
+        try:
+            return float(os.getenv(k, d))
+        except Exception:
+            return float(d)
+    def fbool(k: str) -> bool:
+        return os.getenv(k, "false").lower() in ("true", "1", "yes")
+    return web.json_response({
+        "position_pct": fnum("TREND_POSITION_PCT", "0.03") * 100,
+        "max_exposure": fnum("RISK_MAX_COMBINED_EXPOSURE_PCT", "0.40") * 100,
+        "sma_period":   int(fnum("TREND_SMA_PERIOD", "50")),
+        "exit_buffer":  fnum("TREND_EXIT_BUFFER_PCT", "0"),
+        "stop_loss":    fnum("TREND_STOP_LOSS_PCT", "0"),
+        "check_min":    fnum("TREND_CHECK_S", "300") / 60,
+        "taker_fee":    fnum("COINBASE_TAKER_FEE_PCT", "0.0075") * 100,
+        "maker":        fbool("LIVE_USE_MAKER_ENTRIES"),
+        "regime":       fbool("REGIME_FILTER_ENABLED"),
+        "min_order":    fnum("MIN_ORDER_USDC", "1.0"),
+        "max_spread":   fnum("LIVE_MAX_SPREAD_PCT", "0.15"),
+    })
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Lancement
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2216,6 +2257,7 @@ def build_app() -> web.Application:
     # API lecture
     app.router.add_get("/api/swarm",               handle_swarm)
     app.router.add_get("/api/portfolio",           handle_portfolio)
+    app.router.add_get("/api/config",              handle_config)
     app.router.add_get("/api/director",            handle_director)
     app.router.add_get("/api/decisions",           handle_decisions)
     app.router.add_get("/api/history",             handle_history)
