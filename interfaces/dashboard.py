@@ -443,6 +443,7 @@ HTML = r"""<!DOCTYPE html>
       <div class="hlabel">Valeur du portefeuille</div>
       <div class="hval" id="hero-val">—</div>
       <span class="hdelta" id="hero-delta">—</span>
+      <div id="hero-wl" style="margin-top:9px;font-size:.92em;font-weight:600;">—</div>
       <div class="hfoot">
         <span>réalisé <b id="hero-real">—</b></span>
         <span>latent <b id="hero-lat">—</b></span>
@@ -460,7 +461,7 @@ HTML = r"""<!DOCTYPE html>
         <div class="g">
           <div class="gt"><span class="gl">Exposition combinée</span><span class="gv" id="g-exp-v">—</span></div>
           <div class="gtrack"><i class="gfill" id="g-exp" style="background:var(--acc)"></i></div>
-          <div class="gcap"><span>0%</span><span>cap 40%</span></div>
+          <div class="gcap"><span>0%</span><span id="g-exp-cap">cap 72%</span></div>
         </div>
         <div class="g">
           <div class="gt"><span class="gl">Fear &amp; Greed</span><span class="gv" id="g-fg-v">—</span></div>
@@ -493,10 +494,24 @@ HTML = r"""<!DOCTYPE html>
         var dd = pf.drawdown_pct||0;
         document.getElementById('g-dd-v').textContent = dd.toFixed(2)+'%';
         setW('g-dd', Math.min(100, dd/6*100));
-        var exp=0; (sw||[]).forEach(function(b){ if(b.position && b.position.qty && b.current_price){ exp += b.position.qty*b.current_price; } });
+        var cfg = {}; try { cfg = await (await fetch('/api/config')).json(); } catch(e2){}
+        var cap = (cfg && cfg.max_exposure) ? cfg.max_exposure : 72;
+        var exp=0, wins=0, losses=0;
+        (sw||[]).forEach(function(b){
+          if(b.position && b.position.qty && b.current_price){
+            exp += b.position.qty*b.current_price;
+            if(b.current_price >= (b.position.avg_price||0)) wins++; else losses++;
+          }
+        });
         var expPct = val>0 ? exp/val*100 : 0;
-        document.getElementById('g-exp-v').textContent = '~'+expPct.toFixed(0)+'% / 40%';
-        setW('g-exp', Math.min(100, expPct/40*100));
+        document.getElementById('g-exp-v').textContent = '~'+expPct.toFixed(0)+'% / '+cap.toFixed(0)+'%';
+        setW('g-exp', Math.min(100, expPct/cap*100));
+        var capEl = document.getElementById('g-exp-cap'); if(capEl) capEl.textContent = 'cap '+cap.toFixed(0)+'%';
+        var wlEl = document.getElementById('hero-wl');
+        if(wlEl){
+          if(wins+losses===0){ wlEl.innerHTML = '<span style="color:#6a7789;">aucune position ouverte</span>'; }
+          else { wlEl.innerHTML = '<span style="color:#22e07a;">'+wins+' ▲ gagnante'+(wins>1?'s':'')+'</span> &nbsp;·&nbsp; <span style="color:#ff4d5e;">'+losses+' ▼ perdante'+(losses>1?'s':'')+'</span>'; }
+        }
         var fg = (dr.fear_greed!=null) ? dr.fear_greed : 50;
         document.getElementById('g-fg-v').textContent = fg+' · '+(dr.fear_greed_label||'');
         document.getElementById('g-fg').style.left = Math.max(0,Math.min(100,fg))+'%';
