@@ -463,7 +463,7 @@ async function refresh(){
     window._PF=pf;SW=sw;CFG=cfg;DIR=dir;render();
     $('upd').textContent='maj '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
   }catch(e){$('upd').textContent='hors ligne';}
-  try{ const pc=await api('/api/pnl_curve'); EQ=(pc&&pc.points)||[]; drawEquity(); }catch(e){}
+  try{ const pc=await api('/api/pnl_curve?days=365'); EQ=(pc&&pc.points)||[]; drawEquity(); }catch(e){}
   try{
     const ts=await api('/api/trade_stats');let nc=0,nw=0,best=null,bv=-1e9;
     Object.keys(ts||{}).forEach(k=>{const s=ts[k]||{};nc+=s.n_closed||0;nw+=s.wins||0;if((s.net_pnl_usdc||0)>bv){bv=s.net_pnl_usdc||0;best=k;}});
