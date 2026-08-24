@@ -382,6 +382,7 @@ class BotSwarm:
             # Config "close reglable" (TrendBots seulement)
             if isinstance(bot, TrendBot):
                 entry["autoclose"] = autoclose.get(bot.bot_id)
+                entry["dist_pct"]  = getattr(bot, "_last_dist", None)
             out.append(entry)
         return out
 

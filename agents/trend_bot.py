@@ -72,6 +72,7 @@ class TrendBot:
         self._market      = MarketAgent(symbol=symbol)   # pour price_history/warmup/dashboard
         self._last_trade_ts: float = 0.0
         self._signal_streak: dict  = {"action": None, "count": 0}
+        self._last_dist: float | None = None   # distance prix vs SMA (%) du dernier signal
         self._peak_price:    float = 0.0   # plus haut depuis l'entree (trailing-stop)
         self._gain_alerted:  bool  = False  # alerte "+X%" deja envoyee pour cette position
 
@@ -113,6 +114,10 @@ class TrendBot:
 
         sig = await trend_analyze(self.symbol, live_price)
         self._signal_streak = {"action": sig.action, "count": 1}
+        try:
+            self._last_dist = (sig.metadata or {}).get("dist_pct")
+        except Exception:
+            self._last_dist = None
 
         self._memory.record_decision(
             role="trend_bot", task_type="signal", symbol=self.symbol,

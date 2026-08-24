@@ -76,6 +76,16 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 .g.fg .mk{position:absolute;top:-3px;bottom:-3px;width:3px;background:#fff;border-radius:2px;box-shadow:0 0 0 2px var(--surf);}
 .g .sub{font-family:var(--mono);font-size:.62rem;color:var(--mut);margin-top:7px;}
 
+/* ---- courbe de valeur ---- */
+.chartcard{background:var(--surf);border:1px solid var(--bd);border-radius:16px;padding:16px 14px 12px;}
+.chart-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:0 4px;}
+.chart-delta{font-family:var(--disp);font-weight:700;font-size:1.05rem;}
+.chart-period{font-family:var(--mono);font-size:.6rem;color:var(--mut);}
+.chart-tabs{display:flex;gap:4px;}
+.chart-tabs button{background:var(--surf2);border:1px solid var(--bd);color:var(--mut);font-size:.64rem;font-weight:700;padding:5px 10px;border-radius:8px;cursor:pointer;font-family:var(--mono);}
+.chart-tabs button.on{background:var(--surf-hi);color:var(--ink);border-color:var(--bd-hi);}
+#equity{width:100%;height:130px;display:block;}
+
 /* ---- bot cards ---- */
 .bot{display:flex;align-items:center;gap:13px;background:var(--surf);border:1px solid var(--bd);
   border-radius:15px;padding:15px 16px;margin-bottom:10px;transition:transform .12s,border-color .12s;cursor:pointer;}
@@ -147,6 +157,14 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 #sheet .drow{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--bd);font-size:.9rem;}
 #sheet .drow .dl{color:var(--ink2);} #sheet .drow .dv{font-family:var(--mono);font-weight:700;}
 #sheet .acts{display:flex;gap:10px;margin-top:20px;}
+#sheet .exit-lbl{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);font-weight:700;margin:20px 0 10px;}
+#sheet .exit-modes{display:flex;gap:6px;}
+#sheet .em{flex:1;background:var(--surf2);border:1px solid var(--bd);color:var(--ink2);font-size:.76rem;font-weight:600;padding:11px 4px;border-radius:10px;cursor:pointer;font-family:var(--disp);}
+#sheet .em.on{background:rgba(92,157,255,.15);border-color:rgba(92,157,255,.42);color:var(--acc);}
+#sheet .exit-row{display:flex;gap:8px;align-items:center;margin-top:8px;}
+#sheet .exit-thr{flex:1;display:flex;align-items:center;gap:6px;color:var(--ink2);font-size:.9rem;}
+#sheet .exit-thr input{flex:1;min-width:0;background:var(--surf2);border:1px solid var(--bd);color:var(--ink);border-radius:9px;padding:11px 12px;font-family:var(--mono);font-size:.95rem;}
+#sheet #exit-apply{width:auto;padding:11px 18px;flex-shrink:0;}
 
 /* ---- bottom nav ---- */
 #nav{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;background:rgba(10,14,21,.9);
@@ -184,6 +202,17 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
         <span>latent <b id="pf-lat">—</b></span>
         <span>initial <b id="pf-init">—</b></span>
       </div>
+    </div>
+
+    <div class="eyebrow">Valeur du portefeuille</div>
+    <div class="chartcard">
+      <div class="chart-head">
+        <div><span class="chart-delta" id="chart-delta">—</span> <span class="chart-period" id="chart-period"></span></div>
+        <div class="chart-tabs">
+          <button data-p="7">7j</button><button data-p="30" class="on">30j</button><button data-p="0">Tout</button>
+        </div>
+      </div>
+      <canvas id="equity"></canvas>
     </div>
 
     <div class="eyebrow">Santé &amp; risque</div>
@@ -242,6 +271,7 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
   <h2 id="sh-name">—</h2><div class="ssym" id="sh-sym">—</div>
   <div class="bignpnl" id="sh-pnl">—</div>
   <div id="sh-rows"></div>
+  <div id="sh-exit"></div>
   <div class="acts" id="sh-acts"></div>
 </div>
 
@@ -259,7 +289,7 @@ const $=(id)=>document.getElementById(id);
 const fmt=(n)=>{n=Number(n)||0;return (n<0?'-$':'$')+Math.abs(n).toFixed(2);};
 const pct=(n)=>{n=Number(n)||0;return (n>=0?'+':'')+n.toFixed(2)+'%';};
 const esc=(s)=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-let SW=[], CFG={}, DIR={}, sheetOpen=false;
+let SW=[], CFG={}, DIR={}, sheetOpen=false, EQ=[], eqPeriod=30;
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2600);}
 
 async function api(path){const r=await fetch(path,{cache:'no-store'});if(!r.ok)throw new Error(r.status);return r.json();}
@@ -341,6 +371,10 @@ function openSheet(i){
   if(hasPos){pe.textContent=(pl>=0?'▲ ':'▼ ')+pct(pl);pe.className='bignpnl disp '+(pl>=0?'pos':'neg');}
   else{pe.textContent='—';pe.className='bignpnl disp skel';}
   const sig=(b.signal_streak||{}).action||'—';
+  const dist=(typeof b.dist_pct==='number')?b.dist_pct:null;
+  const smaN=(CFG&&CFG.sma_period)?CFG.sma_period:50;const exitBuf=(CFG&&CFG.exit_buffer)||0;
+  const margin=dist!=null?dist+exitBuf:null;
+  const mcol=margin==null?'':(margin>8?'var(--pos)':margin>3?'var(--warn)':'var(--neg)');
   const drow=(l,v)=>'<div class="drow"><span class="dl">'+l+'</span><span class="dv">'+v+'</span></div>';
   $('sh-rows').innerHTML=
     drow('Statut',b.paused?'⏸ en pause':(hasPos?'position ouverte':'▶ actif (flat)'))+
@@ -349,7 +383,27 @@ function openSheet(i){
     drow('Prix actuel',b.current_price?fmt(b.current_price):'—')+
     (hasPos?drow('Prix d\'entrée',fmt(p.avg_price)):'')+
     drow('Signal',sig==='buy'?'🟢 achat (>SMA)':sig==='sell'?'🔴 vente (<SMA)':'⚪ neutre')+
+    (dist!=null?drow('Prix vs SMA'+smaN,(dist>=0?'+':'')+dist.toFixed(1)+'%'):'')+
+    (hasPos&&margin!=null?drow('Marge avant sortie SMA','<span style="color:'+mcol+'">'+margin.toFixed(1)+'%</span>'):'')+
     drow('Sortie auto',(b.autoclose&&b.autoclose.active)?((b.autoclose.mode==='trailing'?'trailing ':'take-profit ')+b.autoclose.threshold_pct+'%'):'sortie SMA seule');
+  // #2 — controle de la sortie auto depuis l'appli
+  let selMode=(b.autoclose&&b.autoclose.active)?b.autoclose.mode:'pur';
+  const curThr=(b.autoclose&&b.autoclose.threshold_pct)||10;
+  $('sh-exit').innerHTML=
+    '<div class="exit-lbl">Modifier la sortie auto</div>'+
+    '<div class="exit-modes"><button class="em" data-m="pur">Pur (SMA)</button>'+
+    '<button class="em" data-m="trailing">Trailing</button>'+
+    '<button class="em" data-m="take_profit">Take-profit</button></div>'+
+    '<div class="exit-row"><div class="exit-thr" id="exit-thr-wrap"><input type="number" id="exit-thr" value="'+curThr+'" min="1" max="50" step="0.5"> %</div>'+
+    '<button class="btn" id="exit-apply">Appliquer</button></div>';
+  const syncMode=()=>{$('sh-exit').querySelectorAll('.em').forEach(x=>x.classList.toggle('on',x.dataset.m===selMode));$('exit-thr-wrap').style.display=(selMode==='pur')?'none':'flex';};
+  $('sh-exit').querySelectorAll('.em').forEach(bt=>bt.onclick=()=>{selMode=bt.dataset.m;syncMode();});
+  syncMode();
+  $('exit-apply').onclick=async()=>{
+    const thr=parseFloat($('exit-thr').value)||10;
+    const payload=(selMode==='pur')?{active:false}:{active:true,mode:selMode,threshold_pct:thr};
+    try{await fetch('/api/bot/'+b.bot_id+'/autoclose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});toast('Sortie mise à jour ✓');setTimeout(refresh,500);}catch(e){toast('Échec : '+(e.message||e));}
+  };
   const acts=[];
   acts.push('<button class="btn '+(b.paused?'pos':'warn')+'" id="a-pause">'+(b.paused?'Reprendre':'Mettre en pause')+'</button>');
   if(hasPos)acts.push('<button class="btn danger" id="a-close">Clôturer</button>');
@@ -381,6 +435,27 @@ document.querySelectorAll('#nav button').forEach(btn=>btn.onclick=()=>{
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   $('sc-'+btn.dataset.sc).classList.add('active');window.scrollTo(0,0);
 });
+document.querySelectorAll('.chart-tabs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.chart-tabs button').forEach(x=>x.classList.remove('on'));b.classList.add('on');eqPeriod=+b.dataset.p;drawEquity();});
+window.addEventListener('resize',drawEquity);
+
+function drawEquity(){
+  const cv=$('equity');if(!cv)return;
+  const W=cv.clientWidth||320,H=cv.clientHeight||130,dpr=Math.min(2,window.devicePixelRatio||1);
+  cv.width=W*dpr;cv.height=H*dpr;const ctx=cv.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+  if(EQ.length<2){ctx.fillStyle='#61708a';ctx.font='12px system-ui';ctx.fillText('Pas encore assez de données.',10,H/2);$('chart-delta').textContent='—';return;}
+  const cut=eqPeriod?Date.now()-eqPeriod*86400000:0;
+  let pts=EQ.filter(p=>new Date(p.t).getTime()>=cut);if(pts.length<2)pts=EQ.slice(-Math.max(2,pts.length||2));
+  const vs=pts.map(p=>+p.v);let mn=Math.min(...vs),mx=Math.max(...vs);if(mx-mn<1e-6){mx+=1;mn-=1;}
+  const pad=10,gh=H-pad*2,X=i=>pts.length>1?i/(pts.length-1)*W:0,Y=v=>pad+gh-(v-mn)/(mx-mn)*gh;
+  const up=vs[vs.length-1]>=vs[0],col=up?'#3fd08a':'#ff6d7d';
+  ctx.beginPath();ctx.moveTo(X(0),H);pts.forEach((p,i)=>ctx.lineTo(X(i),Y(vs[i])));ctx.lineTo(X(pts.length-1),H);ctx.closePath();
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,up?'rgba(63,208,138,.20)':'rgba(255,109,125,.20)');g.addColorStop(1,'rgba(10,14,21,0)');ctx.fillStyle=g;ctx.fill();
+  ctx.beginPath();pts.forEach((p,i)=>{i?ctx.lineTo(X(i),Y(vs[i])):ctx.moveTo(X(i),Y(vs[i]));});ctx.strokeStyle=col;ctx.lineWidth=2;ctx.lineJoin='round';ctx.stroke();
+  ctx.beginPath();ctx.arc(X(pts.length-1),Y(vs[vs.length-1]),3.5,0,7);ctx.fillStyle=col;ctx.fill();
+  const d0=vs[0],d1=vs[vs.length-1],dp=d0>0?(d1-d0)/d0*100:0;
+  const de=$('chart-delta');de.textContent=(dp>=0?'▲ +':'▼ ')+dp.toFixed(2)+'%';de.style.color=up?'var(--pos)':'var(--neg)';
+  $('chart-period').textContent='sur '+(eqPeriod?eqPeriod+' j':'tout')+' · '+fmt(d1);
+}
 
 async function refresh(){
   try{
@@ -388,6 +463,7 @@ async function refresh(){
     window._PF=pf;SW=sw;CFG=cfg;DIR=dir;render();
     $('upd').textContent='maj '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
   }catch(e){$('upd').textContent='hors ligne';}
+  try{ const pc=await api('/api/pnl_curve'); EQ=(pc&&pc.points)||[]; drawEquity(); }catch(e){}
   try{
     const ts=await api('/api/trade_stats');let nc=0,nw=0,best=null,bv=-1e9;
     Object.keys(ts||{}).forEach(k=>{const s=ts[k]||{};nc+=s.n_closed||0;nw+=s.wins||0;if((s.net_pnl_usdc||0)>bv){bv=s.net_pnl_usdc||0;best=k;}});
