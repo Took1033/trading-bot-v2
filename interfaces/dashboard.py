@@ -2364,7 +2364,8 @@ async def handle_app(request: web.Request) -> web.Response:
             html = f.read()
     except Exception:
         return web.Response(status=404, text="appli introuvable (interfaces/mobile_app.html)")
-    return web.Response(text=html, content_type="text/html", charset="utf-8")
+    return web.Response(text=html, content_type="text/html", charset="utf-8",
+                        headers={"Cache-Control": "no-cache"})
 
 
 async def handle_app_manifest(request: web.Request) -> web.Response:

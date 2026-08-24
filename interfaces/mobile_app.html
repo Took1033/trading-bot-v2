@@ -128,7 +128,12 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
   border-radius:22px 22px 0 0;padding:10px 18px calc(24px + var(--safe-b));transform:translateY(102%);
   transition:transform .3s cubic-bezier(.22,1,.36,1);max-width:640px;margin:0 auto;max-height:88vh;overflow-y:auto;}
 #sheet.open{transform:none;}
-#sheet .grab{width:40px;height:4px;border-radius:2px;background:var(--bd-hi);margin:2px auto 16px;}
+#sheet .grabzone{padding:8px 0 12px;cursor:pointer;}
+#sheet .grab{width:46px;height:5px;border-radius:3px;background:var(--bd-hi);margin:0 auto;}
+#sheet .sh-close{position:absolute;top:14px;right:16px;z-index:3;width:38px;height:38px;border-radius:50%;
+  background:var(--surf-hi);border:1px solid var(--bd);color:var(--ink2);font-size:1.05rem;line-height:1;
+  display:grid;place-items:center;cursor:pointer;transition:transform .1s;}
+#sheet .sh-close:active{transform:scale(.9);}
 #sheet h2{font-family:var(--disp);font-weight:700;font-size:1.3rem;}
 #sheet .ssym{font-family:var(--mono);font-size:.75rem;color:var(--mut);margin-top:2px;}
 #sheet .bignpnl{font-family:var(--disp);font-weight:700;font-size:2.4rem;margin:16px 0;}
@@ -216,7 +221,8 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 
 <div id="scrim"></div>
 <div id="sheet">
-  <div class="grab"></div>
+  <div class="grabzone" id="sh-grab"><div class="grab"></div></div>
+  <button class="sh-close" id="sh-close" aria-label="Fermer">✕</button>
   <h2 id="sh-name">—</h2><div class="ssym" id="sh-sym">—</div>
   <div class="bignpnl" id="sh-pnl">—</div>
   <div id="sh-rows"></div>
@@ -235,7 +241,7 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 const $=(id)=>document.getElementById(id);
 const fmt=(n)=>{n=Number(n)||0;return (n<0?'-$':'$')+Math.abs(n).toFixed(2);};
 const pct=(n)=>{n=Number(n)||0;return (n>=0?'+':'')+n.toFixed(2)+'%';};
-let SW=[], CFG={}, DIR={};
+let SW=[], CFG={}, DIR={}, sheetOpen=false;
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2600);}
 
 async function api(path){const r=await fetch(path,{cache:'no-store'});if(!r.ok)throw new Error(r.status);return r.json();}
@@ -332,10 +338,24 @@ function openSheet(i){
   $('sh-acts').innerHTML=acts.join('');
   $('a-pause').onclick=()=>act('/api/bot/'+b.bot_id+(b.paused?'/resume':'/pause'),b.paused?'Bot repris':'Bot mis en pause')||closeSheet();
   if(hasPos)$('a-close').onclick=()=>{if(confirm('Clôturer la position '+b.symbol+' ? Le P&L sera réalisé.')){act('/api/bot/'+b.bot_id+'/close','Position clôturée');closeSheet();}};
-  $('scrim').classList.add('open');$('sheet').classList.add('open');
+  $('scrim').classList.add('open');$('sheet').classList.add('open');$('sheet').scrollTop=0;
+  if(!sheetOpen){sheetOpen=true;try{history.pushState({sheet:1},'');}catch(e){}}
 }
-function closeSheet(){$('scrim').classList.remove('open');$('sheet').classList.remove('open');}
-$('scrim').onclick=closeSheet;
+function closeSheet(fromPop){
+  if(!sheetOpen)return;sheetOpen=false;
+  $('scrim').classList.remove('open');$('sheet').classList.remove('open');$('sheet').style.transform='';
+  if(!fromPop){try{if(history.state&&history.state.sheet)history.back();}catch(e){}}
+}
+$('scrim').onclick=()=>closeSheet();
+$('sh-close').onclick=()=>closeSheet();
+$('sh-grab').onclick=()=>closeSheet();
+window.addEventListener('popstate',()=>{if(sheetOpen)closeSheet(true);});
+// swipe vers le bas pour fermer (si la fiche est en haut de son scroll)
+(function(){const sh=$('sheet');let sy=0,dy=0,drag=false;
+  sh.addEventListener('touchstart',e=>{if(sh.scrollTop>0){drag=false;return;}sy=e.touches[0].clientY;dy=0;drag=true;sh.style.transition='none';},{passive:true});
+  sh.addEventListener('touchmove',e=>{if(!drag)return;dy=e.touches[0].clientY-sy;if(dy<0)dy=0;sh.style.transform='translateY('+dy+'px)';},{passive:true});
+  sh.addEventListener('touchend',()=>{if(!drag)return;drag=false;sh.style.transition='';if(dy>90)closeSheet();else sh.style.transform='';});
+})();
 
 // navigation
 document.querySelectorAll('#nav button').forEach(btn=>btn.onclick=()=>{
