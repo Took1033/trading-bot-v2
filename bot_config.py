@@ -37,30 +37,75 @@ DEFAULT_BOTS: list[dict] = [
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]+-[A-Z0-9]+$")
 
+# Problemes rencontres au dernier load_bots_config() (config corrompue, doublons
+# ignores...). Vide = RAS. Le swarm le lit au boot pour alerter Telegram (Axe 2).
+LAST_LOAD_ISSUES: list[str] = []
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Chargement / sauvegarde
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _filter_and_dedup(raw: list) -> tuple[list[dict], list[str]]:
+    """Garde les bots bien formes, SANS bot_id ni symbole duplique (= collision de
+    suivi de position, bug connu). Renvoie (gardes, problemes). 1re occurrence gagne."""
+    kept: list[dict] = []
+    issues: list[str] = []
+    seen_ids: set[str] = set()
+    seen_syms: set[str] = set()
+    for b in raw:
+        if not _is_well_formed(b):
+            issues.append(f"entree malformee ignoree : {str(b)[:70]}")
+            continue
+        bid, sym = b["bot_id"], b["symbol"].upper()
+        if bid in seen_ids:
+            issues.append(f"bot_id duplique '{bid}' ignore (collision de suivi)")
+        elif sym in seen_syms:
+            issues.append(f"symbole duplique '{sym}' (bot '{bid}') ignore (collision de position)")
+        else:
+            seen_ids.add(bid)
+            seen_syms.add(sym)
+            kept.append(b)
+    return kept, issues
+
+
+def validate_bots_config(bots: list[dict]) -> list[str]:
+    """Liste les problemes d'une config bots (vide = OK). Reutilisable (dashboard...)."""
+    return _filter_and_dedup(bots)[1]
+
+
 def load_bots_config() -> list[dict]:
-    """Charge la config des bots depuis config/bots.json (fallback DEFAULT_BOTS)."""
+    """Charge config/bots.json. SECURITE (Axe 2) : si le fichier est PRESENT mais
+    corrompu / sans bot valide, on renvoie [] (le bot ne trade RIEN) plutot que de
+    retomber SILENCIEUSEMENT sur les vieux defaults scalpers = mauvais trades. Les
+    problemes sont exposes dans LAST_LOAD_ISSUES (le swarm alerte au boot)."""
+    global LAST_LOAD_ISSUES
+    LAST_LOAD_ISSUES = []
+
     if not CONFIG_PATH.exists():
         log.info("bots_config_missing_using_defaults", path=str(CONFIG_PATH))
-        save_bots_config(DEFAULT_BOTS)   # matérialise le fichier au premier lancement
+        save_bots_config(DEFAULT_BOTS)   # 1er lancement : materialise le fichier
         return [dict(b) for b in DEFAULT_BOTS]
 
     try:
         data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        bots = data.get("bots", [])
-        valid = [b for b in bots if _is_well_formed(b)]
-        if not valid:
-            log.warning("bots_config_empty_using_defaults", path=str(CONFIG_PATH))
-            return [dict(b) for b in DEFAULT_BOTS]
-        log.info("bots_config_loaded", n=len(valid), path=str(CONFIG_PATH))
-        return valid
     except Exception as exc:
-        log.error("bots_config_load_failed", error=str(exc), path=str(CONFIG_PATH))
-        return [dict(b) for b in DEFAULT_BOTS]
+        LAST_LOAD_ISSUES = [f"config/bots.json CORROMPU (JSON invalide : {str(exc)[:70]}) "
+                            f"-> aucun bot charge, le bot ne tradera rien."]
+        log.critical("bots_config_corrupt_trading_nothing", error=str(exc), path=str(CONFIG_PATH))
+        return []
+
+    kept, issues = _filter_and_dedup(data.get("bots", []))
+    if not kept:
+        LAST_LOAD_ISSUES = issues + ["aucun bot valide dans config/bots.json -> le bot ne tradera rien."]
+        log.critical("bots_config_no_valid_bots", path=str(CONFIG_PATH), issues=issues)
+        return []
+    LAST_LOAD_ISSUES = issues
+    if issues:
+        log.warning("bots_config_loaded_with_issues", n=len(kept), issues=issues)
+    else:
+        log.info("bots_config_loaded", n=len(kept), path=str(CONFIG_PATH))
+    return kept
 
 
 def save_bots_config(bots: list[dict]) -> None:

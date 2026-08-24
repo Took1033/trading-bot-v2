@@ -140,6 +140,27 @@ class BotSwarm:
         log.info("bot_swarm_starting", n_bots=len(self.bots),
                  stagger_s=STARTUP_STAGGER_S)
         self._running = True
+
+        # Axe 2 — controle de config au boot : si config/bots.json etait corrompu ou
+        # contenait des doublons, on PREVIENT explicitement (sinon panne silencieuse).
+        # load_bots_config garantit deja qu'on ne trade jamais les vieux defaults.
+        try:
+            import bot_config
+            issues = list(getattr(bot_config, "LAST_LOAD_ISSUES", []))
+            if issues or not self.bots:
+                from interfaces import notifier
+                if not self.bots:
+                    msg = ("🔴 *Kairos — config invalide au démarrage*\n"
+                           + "\n".join(f"• {i}" for i in (issues or ["aucun bot chargé."]))
+                           + "\n\n_Le bot ne trade RIEN. Corrige config/bots.json puis redémarre._")
+                else:
+                    msg = ("🟠 *Kairos — avertissement config au démarrage*\n"
+                           + "\n".join(f"• {i}" for i in issues)
+                           + f"\n\n_{len(self.bots)} bot(s) actif(s), entrées ci-dessus ignorées._")
+                await notifier.notify(msg)
+                log.error("swarm_config_issues_alerted", issues=issues, n_bots=len(self.bots))
+        except Exception as exc:
+            log.warning("swarm_config_alert_failed", error=str(exc))
         # Réconcilie le suivi local avec les vrais soldes Coinbase AVANT de lancer
         # les bots : sinon, au 1er tick après reboot, get_position() renvoie None
         # (mémoire vide) et un TrendBot pourrait re-racheter une position déjà
