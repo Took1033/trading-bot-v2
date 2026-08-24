@@ -103,20 +103,39 @@ async def _notify_discord(text: str) -> bool:
         return False
 
 
+async def _notify_webpush(text: str) -> bool:
+    """Envoie aussi la notif en PUSH WEB vers l'appli mobile (si des abonnes existent).
+    pywebpush est synchrone -> lance dans un thread pour ne pas bloquer l'event loop."""
+    try:
+        import push_manager
+        if not push_manager.has_subscribers():
+            return False
+        clean = lambda s: re.sub(r"[*_`]", "", s).strip()
+        lines = [l for l in text.splitlines() if l.strip()]
+        title = clean(lines[0]) if lines else "Kairos"
+        body  = clean("\n".join(lines[1:]))[:180] if len(lines) > 1 else ""
+        n = await asyncio.to_thread(push_manager.send, title, body)
+        return n > 0
+    except Exception as exc:
+        log.warning("webpush_exception", error=str(exc))
+        return False
+
+
 async def notify(text: str, parse_mode: str = "Markdown") -> bool:
     """
-    Envoie a Telegram ET Discord en parallele (si tous deux configures).
+    Envoie a Telegram, Discord ET push web (appli mobile) en parallele.
     Retourne True si AU MOINS UN canal a reussi.
     """
     results = await asyncio.gather(
         _notify_telegram(text, parse_mode),
         _notify_discord(text),
+        _notify_webpush(text),
         return_exceptions=False,
     )
     success = any(results)
     if success:
-        log.debug("notify_sent",
-                  telegram=results[0], discord=results[1], chars=len(text))
+        log.debug("notify_sent", telegram=results[0], discord=results[1],
+                  push=results[2], chars=len(text))
     else:
         log.debug("notify_no_channel",
                   telegram_cfg=bool(TOKEN), discord_cfg=bool(DISCORD_WEBHOOK))

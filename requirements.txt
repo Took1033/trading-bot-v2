@@ -5,6 +5,9 @@ aiohttp>=3.9.0
 # === Telegram ===
 python-telegram-bot>=21.0.0
 
+# === Notifications push (appli mobile PWA) ===
+pywebpush>=1.14.0   # Web Push / VAPID vers l'appli (requiert HTTPS cote client)
+
 # === Anthropic / Claude ===
 anthropic>=0.40.0
 

@@ -210,6 +210,9 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
     <div class="eyebrow">Kill switch</div>
     <div class="plist"><div class="prow"><span class="pl" id="ks-lbl">—</span><span class="pv" id="ks-val">—</span></div></div>
     <div style="margin-top:12px" id="ks-btn-wrap"></div>
+    <div class="eyebrow">Notifications</div>
+    <div class="plist"><div class="prow"><span class="pl" id="notif-lbl">—</span><span class="pv" id="notif-state">—</span></div></div>
+    <div style="margin-top:12px" id="notif-btn-wrap"></div>
     <div class="eyebrow">À propos</div>
     <div class="plist">
       <div class="prow"><span class="pl">Mode</span><span class="pv" id="ab-mode">—</span></div>
@@ -387,7 +390,34 @@ async function refresh(){
   }catch(e){$('trades').innerHTML='<div class="muted">Historique indisponible.</div>';}
 }
 
-refresh();setInterval(refresh,5000);
+// ---- notifications push ----
+function urlB64ToUint8(s){const pad='='.repeat((4-s.length%4)%4);const b=(s+pad).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(b);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
+async function enableNotif(){
+  try{
+    const reg=await navigator.serviceWorker.register('/app/sw.js',{scope:'/app'});
+    await navigator.serviceWorker.ready;
+    const perm=await Notification.requestPermission();
+    if(perm!=='granted'){toast('Permission refusée');return;}
+    const {key}=await api('/app/push/key');
+    const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8(key)});
+    await fetch('/app/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub)});
+    toast('Notifications activées ✓');renderNotif();
+  }catch(e){toast('Échec : '+(e.message||e));}
+}
+async function testNotif(){try{const r=await fetch('/app/push/test',{method:'POST'});const j=await r.json();toast(j.sent>0?'Notif envoyée ✓':'Aucun abonné');}catch(e){toast('Échec du test');}}
+async function renderNotif(){
+  const wrap=$('notif-btn-wrap'),lbl=$('notif-lbl'),st=$('notif-state');if(!wrap)return;
+  if(!('serviceWorker'in navigator)||!('PushManager'in window)){lbl.textContent='Non supporté par ce navigateur';st.textContent='—';st.className='pv off';wrap.innerHTML='';return;}
+  if(location.protocol!=='https:'){lbl.textContent='Nécessite HTTPS';st.textContent='OFF';st.className='pv off';wrap.innerHTML='<div class="muted" style="font-size:.74rem;text-align:left;padding:4px 2px">Active HTTPS (Tailscale Serve) pour recevoir les alertes du bot sur ce tél. Aujourd\'hui : accès en http, notifications indispo.</div>';return;}
+  try{
+    const reg=await navigator.serviceWorker.getRegistration('/app');
+    const sub=reg?await reg.pushManager.getSubscription():null;
+    if(Notification.permission==='granted'&&sub){lbl.textContent='Activées sur cet appareil';st.textContent='ON';st.className='pv on';wrap.innerHTML='<button class="btn" id="notif-test">Envoyer une notif de test</button>';$('notif-test').onclick=testNotif;}
+    else{lbl.textContent='Recevoir les alertes ici';st.textContent='OFF';st.className='pv off';wrap.innerHTML='<button class="btn pos" id="notif-on">Activer les notifications</button>';$('notif-on').onclick=enableNotif;}
+  }catch(e){lbl.textContent='Notifications';st.textContent='—';wrap.innerHTML='';}
+}
+
+refresh();setInterval(refresh,5000);renderNotif();
 if('serviceWorker'in navigator&&location.protocol==='https:'){navigator.serviceWorker.register('/app/sw.js',{scope:'/app'}).catch(()=>{});}
 </script>
 </body></html>

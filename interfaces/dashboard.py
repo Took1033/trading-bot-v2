@@ -2354,6 +2354,16 @@ _APP_SW_JS = (
     "self.addEventListener('fetch',e=>{const u=new URL(e.request.url);"
     "if(u.pathname.startsWith('/api/'))return;"                       # API : toujours reseau
     "e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||caches.match('/app'))));});\n"
+    "self.addEventListener('push',e=>{let d={title:'Kairos',body:''};"
+    "try{d=e.data.json();}catch(_){if(e.data)d.body=e.data.text();}"
+    "e.waitUntil(self.registration.showNotification(d.title||'Kairos',"
+    "{body:d.body||'',icon:'/app/icon.svg',badge:'/app/icon.svg',"
+    "data:{url:d.url||'/app'},vibrate:[80,40,80],tag:'kairos',renotify:true}));});\n"
+    "self.addEventListener('notificationclick',e=>{e.notification.close();"
+    "const u=(e.notification.data&&e.notification.data.url)||'/app';"
+    "e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(ws=>{"
+    "for(const w of ws){if(w.url.includes('/app')&&'focus'in w)return w.focus();}"
+    "if(clients.openWindow)return clients.openWindow(u);}));});\n"
 )
 
 
@@ -2388,6 +2398,38 @@ async def handle_app_sw(request: web.Request) -> web.Response:
     return resp
 
 
+async def handle_push_key(request: web.Request) -> web.Response:
+    """Clef publique VAPID (applicationServerKey) pour l'abonnement navigateur."""
+    try:
+        import push_manager
+        return web.json_response({"key": push_manager.public_key()})
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+
+
+async def handle_push_subscribe(request: web.Request) -> web.Response:
+    """Enregistre un abonnement push envoye par l'appli."""
+    try:
+        import push_manager
+        sub = await request.json()
+        push_manager.add_subscription(sub)
+        return web.json_response({"ok": True})
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+
+async def handle_push_test(request: web.Request) -> web.Response:
+    """Envoie une notif de test a tous les abonnes."""
+    try:
+        import asyncio as _a
+        import push_manager
+        n = await _a.to_thread(push_manager.send, "🔔 Kairos",
+                               "Notification de test — tout fonctionne !")
+        return web.json_response({"sent": n})
+    except Exception as exc:
+        return web.json_response({"sent": 0, "error": str(exc)}, status=500)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Lancement
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2402,6 +2444,9 @@ def build_app() -> web.Application:
     app.router.add_get("/app/manifest.webmanifest", handle_app_manifest)
     app.router.add_get("/app/icon.svg",            handle_app_icon)
     app.router.add_get("/app/sw.js",               handle_app_sw)
+    app.router.add_get("/app/push/key",            handle_push_key)
+    app.router.add_post("/app/push/subscribe",     handle_push_subscribe)
+    app.router.add_post("/app/push/test",          handle_push_test)
     # API lecture
     app.router.add_get("/api/swarm",               handle_swarm)
     app.router.add_get("/api/portfolio",           handle_portfolio)
