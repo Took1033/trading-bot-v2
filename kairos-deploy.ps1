@@ -1,5 +1,5 @@
 <#
-  kairos-deploy.ps1 — deploiement / redemarrage propre du bot Kairos.
+  kairos-deploy.ps1 - deploiement / redemarrage propre du bot Kairos.
 
   Usage (depuis le dossier du bot) :
     .\kairos-deploy.ps1            # redemarre le bot (apres edition config/.env)
@@ -57,7 +57,7 @@ $nMain = @(Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" |
            Where-Object { $_.CommandLine -match 'main\.py' }).Count
 Write-Host ""
 if ($nMain -eq 0) {
-    Write-Host "X Aucun main.py — le bot n'a pas demarre. Regarde C:\Kairos\logs\trading.log" -ForegroundColor Red
+    Write-Host "X Aucun main.py detecte - le bot n a pas demarre. Voir C:\Kairos\logs\trading.log" -ForegroundColor Red
 } elseif ($nMain -gt 2) {
     Write-Host "X $nMain process main.py -> DOUBLE INSTANCE probable ! Relance le script." -ForegroundColor Red
 } else {
