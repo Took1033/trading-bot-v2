@@ -23,6 +23,8 @@ log = structlog.get_logger()
 TOKEN            = os.getenv("TELEGRAM_BOT_TOKEN", "")
 DISCORD_WEBHOOK  = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
 _CONFIG          = Path(os.getenv("DB_PATH", "memory/trading.db")).parent / "telegram_config.json"
+_HISTORY         = Path(os.getenv("DB_PATH", "memory/trading.db")).parent / "notifications.json"
+_HISTORY_MAX     = 120   # rolling : on garde les 120 dernieres notifs/rapports
 
 
 def _chat_id() -> str:
@@ -103,6 +105,40 @@ async def _notify_discord(text: str) -> bool:
         return False
 
 
+def _log_notification(text: str) -> None:
+    """Persiste chaque notif/rapport (rolling) pour l'onglet Journal de l'appli."""
+    try:
+        from datetime import datetime, timezone
+        clean = lambda s: re.sub(r"[*_`]", "", s).strip()
+        lines = [l for l in text.splitlines() if l.strip()]
+        entry = {
+            "ts":    datetime.now(timezone.utc).isoformat(),
+            "title": clean(lines[0]) if lines else "Kairos",
+            "body":  clean("\n".join(lines[1:])).strip() if len(lines) > 1 else "",
+        }
+        hist: list = []
+        if _HISTORY.exists():
+            try:
+                hist = json.loads(_HISTORY.read_text(encoding="utf-8"))
+            except Exception:
+                hist = []
+        hist.append(entry)
+        _HISTORY.parent.mkdir(parents=True, exist_ok=True)
+        _HISTORY.write_text(json.dumps(hist[-_HISTORY_MAX:], ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        log.warning("notif_log_failed", error=str(exc))
+
+
+def recent_notifications() -> list[dict]:
+    """Historique des notifs/rapports, le plus recent d'abord (pour /api/notifications)."""
+    try:
+        if _HISTORY.exists():
+            return list(reversed(json.loads(_HISTORY.read_text(encoding="utf-8"))))
+    except Exception:
+        pass
+    return []
+
+
 async def _notify_webpush(text: str) -> bool:
     """Envoie aussi la notif en PUSH WEB vers l'appli mobile (si des abonnes existent).
     pywebpush est synchrone -> lance dans un thread pour ne pas bloquer l'event loop."""
@@ -126,6 +162,7 @@ async def notify(text: str, parse_mode: str = "Markdown") -> bool:
     Envoie a Telegram, Discord ET push web (appli mobile) en parallele.
     Retourne True si AU MOINS UN canal a reussi.
     """
+    _log_notification(text)   # historise (Journal de l'appli) quel que soit le canal
     results = await asyncio.gather(
         _notify_telegram(text, parse_mode),
         _notify_discord(text),

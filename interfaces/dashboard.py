@@ -2430,6 +2430,16 @@ async def handle_push_test(request: web.Request) -> web.Response:
         return web.json_response({"sent": 0, "error": str(exc)}, status=500)
 
 
+async def handle_notifications(request: web.Request) -> web.Response:
+    """Historique des notifs/rapports (alertes, resume quotidien, bilan hebdo...)
+    pour l'onglet Journal de l'appli — remplace le fil Telegram."""
+    try:
+        from interfaces import notifier
+        return web.json_response(notifier.recent_notifications())
+    except Exception:
+        return web.json_response([])
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Lancement
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2458,6 +2468,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/signal_debug",        handle_signal_debug)
     app.router.add_get("/api/trades",              handle_trades)
     app.router.add_get("/api/trade_stats",         handle_trade_stats)
+    app.router.add_get("/api/notifications",       handle_notifications)
     app.router.add_get("/api/bot/{bot_id}",        handle_bot_api)
     # API controles
     app.router.add_post("/api/bot/{bot_id}/pause",  handle_bot_pause)
