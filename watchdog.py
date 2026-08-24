@@ -17,6 +17,8 @@ Checks :
   2. Log frais                (mtime de logs/trading.log < MAX_LOG_AGE_MIN)
   3. Drawdown                 (drawdown_pct du dashboard >= MAX_DD_PCT)
   4. Erreurs recentes         (lignes level=error sur la derniere heure)
+  5. Fidelite strategie       (signal 'sell' persistant mais position encore ouverte
+                               = la sortie ne se declenche pas -> position bloquee)
 
 Usage :
   python watchdog.py            # envoie Telegram si anomalie
@@ -66,6 +68,44 @@ def _dashboard() -> dict | None:
             return json.loads(r.read().decode("utf-8"))
     except Exception:
         return None
+
+
+def _swarm() -> list | None:
+    url = f"http://localhost:{DASHBOARD_PORT}/api/swarm"
+    try:
+        with urllib.request.urlopen(url, timeout=8) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _fidelity_problems() -> list[str]:
+    """Fidelite live vs strategie (Axe 3).
+
+    Le bot expose son propre signal courant (`signal_streak.action`) et sa position.
+    Anomalie a haute confiance : signal 'sell' PERSISTANT (>=2 checks consecutifs)
+    alors que la position est TOUJOURS ouverte -> la sortie ne part pas (position
+    bloquee, potentiellement en train de saigner). On exige la persistance pour ne
+    pas alerter sur un flip transitoire que le bot va traiter au prochain tick.
+    On ignore le cas inverse (signal 'buy' + flat) : souvent legitime (filtre de
+    regime, cap d'exposition) -> trop de faux positifs pour une alerte.
+    """
+    swarm = _swarm()
+    if not swarm:
+        return []                       # dashboard down : deja couvert par le check 1
+    out: list[str] = []
+    for b in swarm:
+        if b.get("paused"):
+            continue
+        qty = (b.get("position") or {}).get("qty") or 0
+        streak = b.get("signal_streak") or {}
+        if qty > 0 and streak.get("action") == "sell" and (streak.get("count") or 0) >= 2:
+            out.append(
+                f"Sortie NON executee : {b.get('symbol', '?')} — signal 'sell' depuis "
+                f"{streak.get('count')} checks mais position encore ouverte "
+                f"(l'exit ne part pas ?)."
+            )
+    return out
 
 
 def _log_age_min() -> float | None:
@@ -128,6 +168,8 @@ def _collect_problems() -> list[str]:
     errs = _recent_errors()
     if errs >= MAX_ERRORS_1H:
         problems.append(f"{errs} erreurs (level=error) sur la derniere heure (seuil {MAX_ERRORS_1H}).")
+
+    problems.extend(_fidelity_problems())   # check 5 : fidelite strategie (Axe 3)
 
     return problems
 
