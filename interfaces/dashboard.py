@@ -2332,6 +2332,62 @@ async def handle_config(request: web.Request) -> web.Response:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Appli mobile (PWA) — servie par le bot sur /app (acces prive via Tailscale)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_APP_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mobile_app.html")
+
+_APP_ICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">'
+    '<rect width="512" height="512" rx="112" fill="#0a0e15"/>'
+    '<rect x="28" y="28" width="456" height="456" rx="90" fill="#3fd08a" opacity="0.10"/>'
+    '<path d="M92 348 L204 256 L292 300 L420 148" fill="none" stroke="#3fd08a" '
+    'stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<circle cx="420" cy="148" r="22" fill="#3fd08a"/></svg>'
+)
+
+_APP_SW_JS = (
+    "const C='kairos-v1';\n"
+    "self.addEventListener('install',e=>{self.skipWaiting();"
+    "e.waitUntil(caches.open(C).then(c=>c.addAll(['/app','/app/icon.svg'])));});\n"
+    "self.addEventListener('activate',e=>{e.waitUntil(self.clients.claim());});\n"
+    "self.addEventListener('fetch',e=>{const u=new URL(e.request.url);"
+    "if(u.pathname.startsWith('/api/'))return;"                       # API : toujours reseau
+    "e.respondWith(fetch(e.request).catch(()=>caches.match(e.request).then(r=>r||caches.match('/app'))));});\n"
+)
+
+
+async def handle_app(request: web.Request) -> web.Response:
+    """Sert l'appli mobile (single page). Meme origine que /api -> pas de CORS."""
+    try:
+        with open(_APP_HTML_PATH, encoding="utf-8") as f:
+            html = f.read()
+    except Exception:
+        return web.Response(status=404, text="appli introuvable (interfaces/mobile_app.html)")
+    return web.Response(text=html, content_type="text/html", charset="utf-8")
+
+
+async def handle_app_manifest(request: web.Request) -> web.Response:
+    return web.json_response({
+        "name": "Kairos Alpha", "short_name": "Kairos",
+        "start_url": "/app", "scope": "/app", "display": "standalone",
+        "orientation": "portrait", "background_color": "#0a0e15", "theme_color": "#0a0e15",
+        "icons": [{"src": "/app/icon.svg", "sizes": "any", "type": "image/svg+xml",
+                   "purpose": "any maskable"}],
+    }, content_type="application/manifest+json")
+
+
+async def handle_app_icon(request: web.Request) -> web.Response:
+    return web.Response(text=_APP_ICON_SVG, content_type="image/svg+xml")
+
+
+async def handle_app_sw(request: web.Request) -> web.Response:
+    resp = web.Response(text=_APP_SW_JS, content_type="application/javascript")
+    resp.headers["Service-Worker-Allowed"] = "/app"   # autorise le scope /app
+    return resp
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Lancement
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -2340,6 +2396,11 @@ def build_app() -> web.Application:
     # Pages HTML
     app.router.add_get("/",                        handle_index)
     app.router.add_get("/bot/{bot_id}",            handle_bot_page)
+    # Appli mobile PWA (acces prive via Tailscale)
+    app.router.add_get("/app",                     handle_app)
+    app.router.add_get("/app/manifest.webmanifest", handle_app_manifest)
+    app.router.add_get("/app/icon.svg",            handle_app_icon)
+    app.router.add_get("/app/sw.js",               handle_app_sw)
     # API lecture
     app.router.add_get("/api/swarm",               handle_swarm)
     app.router.add_get("/api/portfolio",           handle_portfolio)
