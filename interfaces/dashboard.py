@@ -1904,6 +1904,52 @@ async def handle_director(request: web.Request) -> web.Response:
     })
 
 
+async def handle_health(request: web.Request) -> web.Response:
+    """Etat de sante systeme consolide pour l'appli (badge + section Reglages).
+
+    Regroupe : mode, kill switch (+raison/depuis), grace d'entree du boot, F&G,
+    fraicheur (age du dernier signal), et le resultat du dernier preflight de
+    demarrage (DB + auth Coinbase). Lecture seule, aucun effet de bord."""
+    from agents import trading_state
+    director = _get_director()
+
+    # Dernier preflight de demarrage (ecrit par preflight.py dans <dir DB>)
+    preflight = None
+    try:
+        pf_path = os.path.join(os.path.dirname(DB_PATH) or ".", "preflight_state.json")
+        if os.path.exists(pf_path):
+            with open(pf_path, encoding="utf-8") as f:
+                preflight = json.load(f)
+    except Exception as exc:
+        log.debug("preflight_state_read_failed", error=str(exc))
+
+    # Fraicheur : timestamp du dernier signal/decision (le bot "respire" ?)
+    last_dec_ts = None
+    try:
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT timestamp FROM decisions ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+            last_dec_ts = row["timestamp"] if row else None
+    except Exception:
+        pass
+
+    paused = sorted(k for k, v in trading_state.get_all_paused().items() if v)
+    return web.json_response({
+        "mode":               MODE,
+        "kill_switch_active": trading_state.is_kill_switch_active(),
+        "kill_reason":        trading_state.get_kill_reason(),
+        "kill_since":         trading_state.get_kill_since(),
+        "entry_grace_s":      round(trading_state.entry_grace_remaining(), 1),
+        "entries_allowed":    trading_state.entries_allowed(),
+        "paused_bots":        paused,
+        "fear_greed":         director._fg_value if director else None,
+        "fear_greed_label":   director._fg_label if director else "—",
+        "last_decision_ts":   last_dec_ts,
+        "preflight":          preflight,
+    })
+
+
 async def handle_history(request: web.Request) -> web.Response:
     """Retourne l'historique de prix en memoire pour chaque bot (sparklines)."""
     swarm = _get_swarm()
@@ -2462,6 +2508,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/portfolio",           handle_portfolio)
     app.router.add_get("/api/config",              handle_config)
     app.router.add_get("/api/director",            handle_director)
+    app.router.add_get("/api/health",              handle_health)
     app.router.add_get("/api/decisions",           handle_decisions)
     app.router.add_get("/api/history",             handle_history)
     app.router.add_get("/api/pnl_curve",            handle_pnl_curve)

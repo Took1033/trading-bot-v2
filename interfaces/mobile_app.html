@@ -188,10 +188,23 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .muted{color:var(--mut);font-size:.85rem;text-align:center;padding:24px;}
 .skel{color:var(--mut);}
+
+/* ---- banniere systeme (etat des entrees / preflight) ---- */
+.banner{border-radius:13px;padding:12px 15px;margin-top:14px;font-size:.85rem;font-weight:600;line-height:1.35;border:1px solid var(--bd);}
+.banner.neg{background:rgba(255,109,125,.12);border-color:rgba(255,109,125,.32);color:var(--neg);}
+.banner.warn{background:rgba(232,181,82,.12);border-color:rgba(232,181,82,.32);color:var(--warn);}
+/* ---- phrase d'etat en clair (carte bot) ---- */
+.bot .ph{font-family:var(--mono);font-size:.68rem;color:var(--ink2);margin-top:4px;line-height:1.3;}
+/* ---- track record par bot ---- */
+.trrow{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--bd);}
+.trrow:last-child{border-bottom:none;}
+.trrow .trsym{font-family:var(--disp);font-weight:700;font-size:.95rem;width:58px;flex-shrink:0;}
+.trrow .trmid{flex:1;font-family:var(--mono);font-size:.7rem;color:var(--mut);}
+.trrow .trpnl{font-family:var(--disp);font-weight:700;font-size:.95rem;}
 </style></head><body>
 
 <div id="bar">
-  <span class="live"></span><span class="logo">Kairos</span>
+  <span class="live" id="live"></span><span class="logo">Kairos</span>
   <span class="ks" id="ks">—</span><span class="upd" id="upd"></span>
 </div>
 
@@ -209,6 +222,8 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
         <span>initial <b id="pf-init">—</b></span>
       </div>
     </div>
+
+    <div id="sysbanner" class="banner" style="display:none"></div>
 
     <div class="eyebrow">Valeur du portefeuille</div>
     <div class="chartcard">
@@ -241,6 +256,8 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
       <div class="tile"><div class="k">Win rate</div><div class="v mono" id="t-wr">—</div></div>
       <div class="tile wide"><div class="k">Meilleur symbole</div><div class="v mono" id="t-best">—</div></div>
     </div>
+    <div class="eyebrow">Track record par bot</div>
+    <div id="trackrecord"><div class="muted skel">Chargement…</div></div>
     <div class="eyebrow">Derniers trades</div>
     <div id="trades"><div class="muted skel">Chargement…</div></div>
   </section>
@@ -261,6 +278,8 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
     <div class="eyebrow">Notifications</div>
     <div class="plist"><div class="prow"><span class="pl" id="notif-lbl">—</span><span class="pv" id="notif-state">—</span></div></div>
     <div style="margin-top:12px" id="notif-btn-wrap"></div>
+    <div class="eyebrow">Santé système</div>
+    <div class="plist" id="health"><div class="prow"><span class="pl skel">Chargement…</span><span class="pv">—</span></div></div>
     <div class="eyebrow">À propos</div>
     <div class="plist">
       <div class="prow"><span class="pl">Mode</span><span class="pv" id="ab-mode">—</span></div>
@@ -300,13 +319,93 @@ const $=(id)=>document.getElementById(id);
 const fmt=(n)=>{n=Number(n)||0;return (n<0?'-$':'$')+Math.abs(n).toFixed(2);};
 const pct=(n)=>{n=Number(n)||0;return (n>=0?'+':'')+n.toFixed(2)+'%';};
 const esc=(s)=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-let SW=[], CFG={}, DIR={}, sheetOpen=false, EQ=[], eqPeriod=30, HIST={};
+let SW=[], CFG={}, DIR={}, sheetOpen=false, EQ=[], eqPeriod=30, HIST={}, HEALTH={}, ONLINE=true;
+
+function relTime(ts){
+  if(!ts)return '—';
+  const s=Math.max(0,(Date.now()-new Date(ts).getTime())/1000);
+  if(s<90)return 'il y a '+Math.round(s)+' s';
+  const m=s/60;if(m<90)return 'il y a '+Math.round(m)+' min';
+  const h=m/60;if(h<48)return 'il y a '+Math.round(h)+' h';
+  return 'il y a '+Math.round(h/24)+' j';
+}
+// Point de vie (barre) : vert = OK, ambre = signal ancien (bot peut-etre bloque),
+// rouge = appli hors ligne (dashboard injoignable).
+function setDot(){
+  const dot=$('live');if(!dot)return;
+  let color='var(--pos)',pulse=true;
+  if(!ONLINE){color='var(--neg)';pulse=false;}
+  else{const ts=HEALTH.last_decision_ts;const ageMin=ts?(Date.now()-new Date(ts).getTime())/60000:0;
+    if(ageMin>60){color='var(--warn)';}}
+  dot.style.background=color;dot.style.animation=pulse?'':'none';
+}
+// P1 — sante systeme : banniere accueil, pastille barre, bloc Reglages.
+function renderHealth(){
+  const h=HEALTH||{};setDot();
+  const ks=$('ks');
+  if(h.kill_switch_active){ks.textContent='KILL';ks.className='ks on';ks.style.color='';ks.style.background='';}
+  else if((h.entry_grace_s||0)>0){ks.textContent='BOOT';ks.className='ks';ks.style.color='var(--warn)';ks.style.background='rgba(232,181,82,.16)';}
+  else{ks.textContent='ACTIF';ks.className='ks';ks.style.color='';ks.style.background='';}
+  // banniere accueil (priorite : preflight KO > kill > grace de boot)
+  const bn=$('sysbanner');const pf=h.preflight;let msg='',kind='';
+  if(pf&&pf.ok===false){kind='neg';msg='⚠️ Dernier démarrage : échec des contrôles — voir Réglages ▸ Santé système.';}
+  else if(h.kill_switch_active){kind='neg';msg='⏸ Entrées bloquées — '+(h.kill_reason||'kill switch actif');}
+  else if((h.entry_grace_s||0)>0){kind='warn';msg='⏳ Démarrage — vérification du marché ('+Math.round(h.entry_grace_s)+' s), entrées en attente.';}
+  if(msg){bn.className='banner '+kind;bn.textContent=msg;bn.style.display='block';}else{bn.style.display='none';}
+  // bloc Reglages
+  const el=$('health');if(!el)return;
+  const checks={};((pf&&pf.checks)||[]).forEach(c=>checks[c.name]=c);
+  const g=l=>l==='ok'?'<span class="pv on">✓</span>':l==='warn'?'<span class="pv" style="color:var(--warn)">⚠</span>':'<span class="pv off">✗</span>';
+  const row=(l,v)=>'<div class="prow"><span class="pl">'+l+'</span>'+v+'</div>';
+  const t=pf&&pf.ts?' · '+new Date(pf.ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):'';
+  const bootVal=pf?'<span class="pv '+(pf.ok?'on':'off')+'">'+(pf.ok?'✓ OK':'✗ échec')+t+'</span>':'<span class="pv">—</span>';
+  const entries=h.entries_allowed?'<span class="pv on">autorisées</span>'
+    :(h.kill_switch_active?'<span class="pv off">bloquées</span>':'<span class="pv" style="color:var(--warn)">grace '+Math.round(h.entry_grace_s||0)+'s</span>');
+  el.innerHTML=
+    row('Dernier démarrage',bootVal)+
+    row('Base de données',checks.db?g(checks.db.level):'<span class="pv">—</span>')+
+    row('Auth Coinbase',checks.coinbase?g(checks.coinbase.level):'<span class="pv">—</span>')+
+    row('Dernier signal','<span class="pv">'+(ONLINE?relTime(h.last_decision_ts):'hors ligne')+'</span>')+
+    row('Entrées',entries);
+}
+// P3 — track record par bot (P&L realise net, trades clotures, win rate).
+function renderTrackRecord(ts){
+  const el=$('trackrecord');if(!el)return;
+  const keys=Object.keys(ts||{}).filter(k=>((ts[k]||{}).n_closed||0)>0);
+  if(!keys.length){el.innerHTML='<div class="muted">Aucun trade clôturé pour l\'instant.</div>';return;}
+  keys.sort((a,b)=>((ts[b]||{}).net_pnl_usdc||0)-((ts[a]||{}).net_pnl_usdc||0));
+  el.innerHTML='<div class="plist">'+keys.map(k=>{
+    const s=ts[k]||{},net=s.net_pnl_usdc||0,wr=s.win_rate!=null?Math.round(s.win_rate*100)+'%':'—';
+    return '<div class="trrow"><span class="trsym">'+esc(k.replace('-USDC',''))+'</span>'
+      +'<span class="trmid">'+(s.n_closed||0)+' clôt · '+wr+' win</span>'
+      +'<span class="trpnl '+(net>=0?'pos':'neg')+'">'+(net>=0?'+':'')+net.toFixed(2)+'$</span></div>';
+  }).join('')+'</div>';
+}
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2600);}
 
 async function api(path){const r=await fetch(path,{cache:'no-store'});if(!r.ok)throw new Error(r.status);return r.json();}
 async function act(path,label){try{const r=await fetch(path,{method:'POST'});if(!r.ok)throw new Error(r.status);toast(label);setTimeout(refresh,400);}catch(e){toast('Échec : '+e.message);}}
 
 function botPnl(b){const p=b.position||{};if(!(p.qty>0)||!b.current_price)return null;return (b.current_price-(p.avg_price||0))/(p.avg_price||1)*100;}
+
+// Etat du bot en langage clair (carte accueil) — s'appuie sur les donnees deja
+// presentes : position, distance a la SMA, bande de sortie, pause.
+function botPhrase(b){
+  if(b.paused) return '⏸ en pause';
+  const p=b.position||{},hasPos=p.qty>0;
+  const dist=(typeof b.dist_pct==='number')?b.dist_pct:null;
+  const smaN=(CFG&&CFG.sma_period)||50;
+  if(hasPos){
+    const pl=botPnl(b);let s='en position';
+    if(pl!=null)s+=' · '+(pl>=0?'+':'')+pl.toFixed(1)+'%';
+    if(dist!=null){const margin=dist+((CFG&&CFG.exit_buffer)||0);if(margin>0)s+=' · sortie si -'+margin.toFixed(1)+'%';}
+    return s;
+  }
+  if(dist!=null) return dist>=0
+    ? 'prêt · +'+dist.toFixed(1)+'% au-dessus SMA'+smaN
+    : 'en attente · '+Math.abs(dist).toFixed(1)+'% sous SMA'+smaN;
+  return '▶ actif · flat';
+}
 
 function render(){
   const pf=window._PF||{},sw=SW||[],dir=DIR||{},cfg=CFG||{};
@@ -348,7 +447,7 @@ function render(){
     else if(hasPos)rt='<div class="pnl disp '+(pl>=0?'pos':'neg')+'">'+(pl>=0?'▲':'▼')+' '+Math.abs(pl).toFixed(1)+'%</div><div class="st">'+fmt(p.qty*b.current_price)+'</div>';
     else rt='<div class="st flat">▶ actif</div><div class="st">flat</div>';
     const tk=(b.symbol||'').split('-')[0];
-    return '<div class="bot '+cls+'" data-i="'+i+'"><div class="ic">'+tk+'</div><div class="mid"><div class="nm">'+(b.name||b.bot_id)+'</div><div class="sy">'+b.symbol+'</div></div><div class="rt">'+rt+'</div></div>';
+    return '<div class="bot '+cls+'" data-i="'+i+'"><div class="ic">'+tk+'</div><div class="mid"><div class="nm">'+(b.name||b.bot_id)+'</div><div class="sy">'+b.symbol+'</div><div class="ph">'+botPhrase(b)+'</div></div><div class="rt">'+rt+'</div></div>';
   }).join('');
   document.querySelectorAll('.bot').forEach(el=>el.onclick=()=>openSheet(+el.dataset.i));
   // réglages
@@ -359,6 +458,7 @@ function render(){
   $('ks-b').onclick=()=>{const on=!ks;if(confirm(on?'Activer le KILL SWITCH ? Toutes les entrées seront bloquées.':'Réarmer le trading ?'))act(on?'/api/kill':'/api/release',on?'Kill switch activé':'Trading réarmé');};
   $('ab-mode').textContent=(dir.mode||'—').toUpperCase();
   $('ab-mode').className='pv '+((dir.mode==='live')?'on':'');
+  renderHealth();
 }
 
 function renderParams(){
@@ -490,10 +590,10 @@ function drawEquity(){
 
 async function refresh(){
   try{
-    const [pf,sw,cfg,dir]=await Promise.all([api('/api/portfolio'),api('/api/swarm'),api('/api/config'),api('/api/director')]);
-    window._PF=pf;SW=sw;CFG=cfg;DIR=dir;render();
+    const [pf,sw,cfg,dir,hl]=await Promise.all([api('/api/portfolio'),api('/api/swarm'),api('/api/config'),api('/api/director'),api('/api/health')]);
+    window._PF=pf;SW=sw;CFG=cfg;DIR=dir;HEALTH=hl;ONLINE=true;render();
     $('upd').textContent='maj '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
-  }catch(e){$('upd').textContent='hors ligne';}
+  }catch(e){ONLINE=false;$('upd').textContent='hors ligne';setDot();}
   try{ const pc=await api('/api/pnl_curve?days=365'); EQ=(pc&&pc.points)||[]; drawEquity(); }catch(e){}
   try{ HIST=await api('/api/history')||{}; }catch(e){}
   try{
@@ -501,6 +601,7 @@ async function refresh(){
     Object.keys(ts||{}).forEach(k=>{const s=ts[k]||{};nc+=s.n_closed||0;nw+=s.wins||0;if((s.net_pnl_usdc||0)>bv){bv=s.net_pnl_usdc||0;best=k;}});
     $('t-closed').textContent=nc;$('t-wr').textContent=nc?Math.round(nw/nc*100)+'%':'—';
     $('t-best').textContent=best?best.replace('-USDC','')+' '+(bv>=0?'+':'')+bv.toFixed(2)+'$':'—';$('t-best').className='v mono '+(bv>=0?'pos':'neg');
+    renderTrackRecord(ts);
   }catch(e){}
   try{
     const tr=await api('/api/trades');const rows=(Array.isArray(tr)?tr:(tr.trades||[])).slice(0,14);

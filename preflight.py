@@ -25,9 +25,11 @@ Le trou F&G du boot est ferme separement par DirectorAgent.preflight_fg_gate().
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sqlite3
 import sys
+from datetime import datetime, timezone
 
 import structlog
 
@@ -197,6 +199,24 @@ def _print_report(mode: str, results: list[CheckResult]) -> None:
     print()
 
 
+def _persist_state(mode: str, results: list[CheckResult]) -> None:
+    """Ecrit le resultat du preflight dans <dossier DB>/preflight_state.json pour que
+    l'appli (endpoint /api/health) affiche l'etat du dernier demarrage. Best-effort."""
+    try:
+        db_path = os.getenv("DB_PATH", "memory/trading.db")
+        out = os.path.join(os.path.dirname(db_path) or ".", "preflight_state.json")
+        payload = {
+            "ts":     datetime.now(timezone.utc).isoformat(),
+            "mode":   mode,
+            "ok":     not any(r.is_fatal for r in results),
+            "checks": [{"name": r.name, "level": r.level, "detail": r.detail} for r in results],
+        }
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception as exc:
+        log.warning("preflight_persist_failed", error=str(exc))
+
+
 async def _notify_report(mode: str, results: list[CheckResult]) -> None:
     """Push/Telegram UNIQUEMENT s'il y a un warn/fatal (silencieux si tout OK)."""
     fatals = [r for r in results if r.level == "fatal"]
@@ -223,6 +243,7 @@ async def run(mode: str) -> list[CheckResult]:
     le swarm et de lancer les taches."""
     results = [check_db(), await check_coinbase_auth(mode)]
     _print_report(mode, results)
+    _persist_state(mode, results)
 
     for r in results:
         lvl = log.error if r.is_fatal else (log.warning if r.level == "warn" else log.info)
