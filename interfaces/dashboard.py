@@ -1934,9 +1934,11 @@ async def handle_health(request: web.Request) -> web.Response:
     except Exception:
         pass
 
+    import app_auth
     paused = sorted(k for k, v in trading_state.get_all_paused().items() if v)
     return web.json_response({
         "mode":               MODE,
+        "auth_enabled":       app_auth.is_enabled(),
         "kill_switch_active": trading_state.is_kill_switch_active(),
         "kill_reason":        trading_state.get_kill_reason(),
         "kill_since":         trading_state.get_kill_since(),
@@ -2606,10 +2608,64 @@ async def handle_notifications(request: web.Request) -> web.Response:
 # Lancement
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def handle_login(request: web.Request) -> web.Response:
+    """POST /app/login {password} -> jeton de session signe. Public (barriere d'entree)."""
+    import app_auth
+    if not app_auth.is_enabled():
+        return web.json_response({"ok": True, "auth": "disabled"})
+    if not app_auth.login_rate_ok():
+        return web.json_response({"ok": False, "error": "Trop de tentatives — réessaie dans quelques minutes."},
+                                 status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    pw = body.get("password") if isinstance(body, dict) else None
+    if not app_auth.check_password(pw or ""):
+        log.warning("app_login_failed", remote=request.remote)
+        return web.json_response({"ok": False, "error": "Mot de passe incorrect."}, status=401)
+    tok = app_auth.issue_token()
+    log.info("app_login_ok")
+    return web.json_response({"ok": True, **tok})
+
+
+# Chemins accessibles SANS jeton : la coquille HTML (qui n'affiche aucune donnee avant
+# de fetch /api/*), les assets PWA, la cle VAPID publique, et le login lui-meme.
+_PUBLIC_GET = {"/", "/app", "/app/manifest.webmanifest", "/app/icon.svg",
+               "/app/sw.js", "/app/push/key"}
+
+
+def _is_public(request: web.Request) -> bool:
+    p, m = request.path, request.method
+    if m == "POST" and p == "/app/login":
+        return True
+    if m == "GET" and (p in _PUBLIC_GET or p.startswith("/bot/")):
+        return True
+    return False
+
+
+@web.middleware
+async def auth_middleware(request: web.Request, handler):
+    """Exige un jeton valide sur TOUTES les donnees et actions quand APP_PASSWORD est
+    defini. Ouvert (mais avertit) si non defini -> retro-compatible."""
+    import app_auth
+    if not app_auth.is_enabled() or _is_public(request):
+        return await handler(request)
+    if app_auth.verify_token(app_auth.bearer_from_request(request)):
+        return await handler(request)
+    return web.json_response({"error": "auth", "detail": "Authentification requise."}, status=401)
+
+
 def build_app() -> web.Application:
-    app = web.Application()
+    import app_auth
+    if not app_auth.is_enabled():
+        log.warning("app_auth_disabled",
+                    hint="Definis APP_PASSWORD dans .env pour proteger l'appli exposee sur le tailnet "
+                         "(les endpoints declenchent de vrais ordres).")
+    app = web.Application(middlewares=[auth_middleware])
     # Pages HTML
     app.router.add_get("/",                        handle_index)
+    app.router.add_post("/app/login",              handle_login)
     app.router.add_get("/bot/{bot_id}",            handle_bot_page)
     # Appli mobile PWA (acces prive via Tailscale)
     app.router.add_get("/app",                     handle_app)

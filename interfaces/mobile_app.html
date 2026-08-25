@@ -192,6 +192,20 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 .muted{color:var(--mut);font-size:.85rem;text-align:center;padding:24px;}
 .skel{color:var(--mut);}
 
+/* ---- ecran de connexion ---- */
+#login{position:fixed;inset:0;z-index:60;background:rgba(7,10,16,.94);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  display:none;align-items:center;justify-content:center;padding:24px;}
+#login.show{display:flex;}
+.login-card{width:100%;max-width:340px;background:var(--surf);border:1px solid var(--bd);
+  border-radius:20px;padding:28px 22px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);}
+.login-card .lg{font-family:var(--disp);font-weight:700;font-size:1.6rem;letter-spacing:-.01em;}
+.login-card .sb{color:var(--mut);font-size:.82rem;margin:7px 0 22px;}
+.login-card input{width:100%;background:var(--surf2);border:1px solid var(--bd);color:var(--ink);
+  border-radius:12px;padding:14px 15px;font-size:1rem;font-family:var(--mono);margin-bottom:12px;}
+.login-card input:focus{outline:none;border-color:var(--acc);}
+.login-err{color:var(--neg);font-size:.82rem;margin-top:12px;min-height:1.1em;}
+
 /* ---- banniere systeme (etat des entrees / preflight) ---- */
 .banner{border-radius:13px;padding:12px 15px;margin-top:14px;font-size:.85rem;font-weight:600;line-height:1.35;border:1px solid var(--bd);}
 .banner.neg{background:rgba(255,109,125,.12);border-color:rgba(255,109,125,.32);color:var(--neg);}
@@ -290,6 +304,7 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
       <div class="prow"><span class="pl">Mode</span><span class="pv" id="ab-mode">—</span></div>
       <div class="prow"><span class="pl">Accès</span><span class="pv">privé (Tailscale)</span></div>
     </div>
+    <div style="margin-top:12px" id="logout-wrap"></div>
     <div class="muted" style="margin-top:18px;font-size:.72rem;">Kairos v1 · lecture &amp; contrôle · les actions sont réelles.</div>
   </section>
 </main>
@@ -316,6 +331,16 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
   <button data-sc="journal"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>Journal</button>
   <button data-sc="set"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.5-2.4 1a7 7 0 0 0-1.7-1L14.5 2h-4l-.3 2.5a7 7 0 0 0-1.7 1l-2.4-1-2 3.5L4 11a7 7 0 0 0 0 2l-2 1.5 2 3.5 2.4-1a7 7 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7 7 0 0 0 1.7-1l2.4 1 2-3.5-2-1.5a7 7 0 0 0 .1-1z"/></svg>Réglages</button>
 </nav>
+
+<div id="login">
+  <div class="login-card">
+    <div class="lg">Kairos</div>
+    <div class="sb">Appli privée — connexion requise</div>
+    <input id="login-pw" type="password" placeholder="Mot de passe" autocomplete="current-password" inputmode="text">
+    <button class="btn pos" id="login-go">Se connecter</button>
+    <div class="login-err" id="login-err"></div>
+  </div>
+</div>
 
 <div id="toast"></div>
 
@@ -356,6 +381,7 @@ function renderHealth(){
   if(pf&&pf.ok===false){kind='neg';msg='⚠️ Dernier démarrage : échec des contrôles — voir Réglages ▸ Santé système.';}
   else if(h.kill_switch_active){kind='neg';msg='⏸ Entrées bloquées — '+(h.kill_reason||'kill switch actif');}
   else if((h.entry_grace_s||0)>0){kind='warn';msg='⏳ Démarrage — vérification du marché ('+Math.round(h.entry_grace_s)+' s), entrées en attente.';}
+  else if(h.auth_enabled===false){kind='warn';msg='🔓 Appli non protégée — définis APP_PASSWORD dans .env pour exiger un mot de passe.';}
   if(msg){bn.className='banner '+kind;bn.textContent=msg;bn.style.display='block';}else{bn.style.display='none';}
   // bloc Reglages
   const el=$('health');if(!el)return;
@@ -371,7 +397,11 @@ function renderHealth(){
     row('Base de données',checks.db?g(checks.db.level):'<span class="pv">—</span>')+
     row('Auth Coinbase',checks.coinbase?g(checks.coinbase.level):'<span class="pv">—</span>')+
     row('Dernier signal','<span class="pv">'+(ONLINE?relTime(h.last_decision_ts):'hors ligne')+'</span>')+
-    row('Entrées',entries);
+    row('Entrées',entries)+
+    row('Protection appli',h.auth_enabled?'<span class="pv on">activée</span>':'<span class="pv" style="color:var(--warn)">non protégée</span>');
+  const lw=$('logout-wrap');
+  if(lw){lw.innerHTML=(h.auth_enabled&&TOKEN)?'<button class="btn" id="logout-b">Se déconnecter</button>':'';
+    const lb=$('logout-b');if(lb)lb.onclick=logout;}
 }
 // P3 — track record par bot (P&L realise net, trades clotures, win rate).
 function renderTrackRecord(ts){
@@ -401,8 +431,36 @@ async function exportTrackRecord(){
 }
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2600);}
 
-async function api(path){const r=await fetch(path,{cache:'no-store'});if(!r.ok)throw new Error(r.status);return r.json();}
-async function act(path,label){try{const r=await fetch(path,{method:'POST'});if(!r.ok)throw new Error(r.status);toast(label);setTimeout(refresh,400);}catch(e){toast('Échec : '+e.message);}}
+// ---- authentification ----
+const TOKEN_KEY='kairos_token';
+let TOKEN=localStorage.getItem(TOKEN_KEY)||'';
+function authHeaders(extra){const h=Object.assign({},extra||{});if(TOKEN)h['Authorization']='Bearer '+TOKEN;return h;}
+function showLogin(){const o=$('login');if(o&&!o.classList.contains('show')){o.classList.add('show');const p=$('login-pw');if(p)setTimeout(()=>p.focus(),60);}}
+function hideLogin(){const o=$('login');if(o)o.classList.remove('show');}
+async function doLogin(){
+  const pw=$('login-pw').value||'';const err=$('login-err');err.textContent='';
+  try{
+    const r=await fetch('/app/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok&&j.token){TOKEN=j.token;localStorage.setItem(TOKEN_KEY,TOKEN);$('login-pw').value='';hideLogin();refresh();renderNotif();}
+    else{err.textContent=j.error||('Échec ('+r.status+')');}
+  }catch(e){err.textContent='Réseau indisponible';}
+}
+function logout(){TOKEN='';localStorage.removeItem(TOKEN_KEY);showLogin();}
+
+async function api(path){
+  const r=await fetch(path,{cache:'no-store',headers:authHeaders()});
+  if(r.status===401){showLogin();throw new Error('auth');}
+  if(!r.ok)throw new Error(r.status);
+  return r.json();
+}
+async function postJSON(path,obj){
+  const r=await fetch(path,{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(obj||{})});
+  if(r.status===401){showLogin();throw new Error('auth');}
+  if(!r.ok)throw new Error(r.status);
+  return r.json().catch(()=>({}));
+}
+async function act(path,label){try{const r=await fetch(path,{method:'POST',headers:authHeaders()});if(r.status===401){showLogin();return;}if(!r.ok)throw new Error(r.status);toast(label);setTimeout(refresh,400);}catch(e){toast('Échec : '+e.message);}}
 
 function botPnl(b){const p=b.position||{};if(!(p.qty>0)||!b.current_price)return null;return (b.current_price-(p.avg_price||0))/(p.avg_price||1)*100;}
 
@@ -537,7 +595,7 @@ function openSheet(i){
   $('exit-apply').onclick=async()=>{
     const thr=parseFloat($('exit-thr').value)||10;
     const payload=(selMode==='pur')?{active:false}:{active:true,mode:selMode,threshold_pct:thr};
-    try{await fetch('/api/bot/'+b.bot_id+'/autoclose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});toast('Sortie mise à jour ✓');setTimeout(refresh,500);}catch(e){toast('Échec : '+(e.message||e));}
+    try{await postJSON('/api/bot/'+b.bot_id+'/autoclose',payload);toast('Sortie mise à jour ✓');setTimeout(refresh,500);}catch(e){toast('Échec : '+(e.message||e));}
   };
   const acts=[];
   acts.push('<button class="btn '+(b.paused?'pos':'warn')+'" id="a-pause">'+(b.paused?'Reprendre':'Mettre en pause')+'</button>');
@@ -649,11 +707,11 @@ async function enableNotif(){
     if(perm!=='granted'){toast('Permission refusée');return;}
     const {key}=await api('/app/push/key');
     const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8(key)});
-    await fetch('/app/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub)});
+    await postJSON('/app/push/subscribe',sub);
     toast('Notifications activées ✓');renderNotif();
   }catch(e){toast('Échec : '+(e.message||e));}
 }
-async function testNotif(){try{const r=await fetch('/app/push/test',{method:'POST'});const j=await r.json();toast(j.sent>0?'Notif envoyée ✓':'Aucun abonné');}catch(e){toast('Échec du test');}}
+async function testNotif(){try{const r=await fetch('/app/push/test',{method:'POST',headers:authHeaders()});if(r.status===401){showLogin();return;}const j=await r.json();toast(j.sent>0?'Notif envoyée ✓':'Aucun abonné');}catch(e){toast('Échec du test');}}
 async function renderNotif(){
   const wrap=$('notif-btn-wrap'),lbl=$('notif-lbl'),st=$('notif-state');if(!wrap)return;
   if(!('serviceWorker'in navigator)||!('PushManager'in window)){lbl.textContent='Non supporté par ce navigateur';st.textContent='—';st.className='pv off';wrap.innerHTML='';return;}
@@ -676,13 +734,15 @@ async function renderNotifPrefs(){
     +'<div class="prow"><span class="pl">Système (sécurité)</span><span class="pv on">toujours</span></div></div>';
   el.querySelectorAll('.pv.tog').forEach(t=>t.onclick=async()=>{
     const k=t.dataset.k,newOn=!t.classList.contains('on');
-    try{await fetch('/app/push/prefs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[k]:newOn})});
+    try{await postJSON('/app/push/prefs',{[k]:newOn});
       t.classList.toggle('on',newOn);t.classList.toggle('off',!newOn);t.textContent=newOn?'ON':'OFF';toast('Préférence enregistrée ✓');}
     catch(e){toast('Échec : '+(e.message||e));}
   });
 }
 
 $('tr-export').onclick=exportTrackRecord;
+$('login-go').onclick=doLogin;
+$('login-pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 refresh();setInterval(refresh,5000);renderNotif();
 if('serviceWorker'in navigator&&location.protocol==='https:'){navigator.serviceWorker.register('/app/sw.js',{scope:'/app'}).catch(()=>{});}
 </script>
