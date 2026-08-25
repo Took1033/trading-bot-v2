@@ -77,6 +77,44 @@ class DirectorAgent:
     # Boucle principale
     # ─────────────────────────────────────────────────────────────────────────
 
+    async def preflight_fg_gate(self) -> None:
+        """Ferme le trou F&G du demarrage — a appeler AVANT de lancer les taches bots.
+
+        Sans ca, le 1er check Fear & Greed n'a lieu qu'apres ~45s (sleep initial 15s
+        + un 1er _check qui ne fait qu'amorcer la valeur du portefeuille) : un TrendBot
+        peut ouvrir une position en plein Extreme Fear pendant cette fenetre, car il
+        ne lit pas le F&G lui-meme (sa seule protection peur = ce kill switch).
+
+        - F&G < seuil        -> arme le kill switch tout de suite (cause_fg=True :
+          la reprise auto reste geree correctement par _maybe_release_kill_switch).
+        - F&G lisible et sain -> rien (entrees autorisees, aucune latence ajoutee).
+        - F&G illisible (API HS) -> courte grace d'entree deterministe, le temps que
+          le Director fasse sa 1re vraie evaluation, plutot que laisser le trou ouvert.
+
+        Best-effort : ne leve jamais (le demarrage ne doit pas dependre de l'API F&G).
+        """
+        try:
+            fg = await self._fetch_fear_greed()
+        except Exception as exc:
+            fg = None
+            log.warning("preflight_fg_fetch_error", error=str(exc))
+
+        if fg is None:
+            grace_s = 15 + CHECK_INTERVAL_S + 30   # > (sleep initial + 1er check)
+            trading_state.set_entry_grace(time.time() + grace_s)
+            log.warning("preflight_fg_unknown_entry_grace", grace_s=grace_s)
+            return
+
+        if fg < FG_EXTREME_FEAR:
+            await self._trigger_kill_switch(
+                f"Demarrage en Extreme Fear (Fear & Greed = {fg}/100 — {self._fg_label})",
+                time.time(),
+                cause_fg=True,
+            )
+            log.warning("preflight_fg_gate_armed", fg=fg, label=self._fg_label)
+        else:
+            log.info("preflight_fg_gate_ok", fg=fg, label=self._fg_label)
+
     async def run_forever(self) -> None:
         """Loop infini : check toutes les 30s."""
         # Petit delai initial pour laisser les bots demarrer

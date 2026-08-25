@@ -89,6 +89,13 @@ async def main() -> None:
     from agents.director_agent import DirectorAgent
     from interfaces.notifier   import notify
 
+    # ── Preflight ACTIF (Axe 2 fiabilite) ────────────────────────────────────
+    # Au-dela du controle statique de config_validator : teste que la DB s'ouvre
+    # vraiment et que la cle Coinbase authentifie (une cle revoquee passe le
+    # controle statique mais fait tourner le bot aveugle). FATAL -> notify + exit.
+    import preflight
+    await preflight.run(MODE)
+
     # ── Init swarm + director ────────────────────────────────────────────────
     swarm    = BotSwarm()
     director = DirectorAgent(swarm)
@@ -96,6 +103,11 @@ async def main() -> None:
     # Expose pour le dashboard et Telegram
     sys.modules["__main__"].SWARM    = swarm
     sys.modules["__main__"].DIRECTOR = director
+
+    # Ferme le trou F&G du demarrage AVANT de lancer les taches bots : si le marche
+    # est en Extreme Fear, arme le kill switch tout de suite (sinon une entree
+    # pouvait passer dans les ~45s avant la 1re evaluation du Director).
+    await director.preflight_fg_gate()
 
     # ── Mode headless (sans Telegram) ────────────────────────────────────────
     if not TOKEN:

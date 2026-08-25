@@ -210,6 +210,14 @@ class TrendBot:
                 log.info("trend_entry_blocked_kill_switch", bot_id=self.bot_id,
                          reason=trading_state.get_kill_reason())
                 return
+            # Grace de demarrage : tant que le preflight/Director n'a pas confirme
+            # que le marche n'est pas en Extreme Fear, on ne prend pas de nouvelle
+            # position (ferme le trou ~45s du boot). Ne gene jamais les sorties.
+            grace = trading_state.entry_grace_remaining()
+            if grace > 0:
+                log.info("trend_entry_blocked_boot_grace", bot_id=self.bot_id,
+                         remaining_s=round(grace, 1))
+                return
             # Filtre de regime : on n'ouvre les ALTS que si le marche directeur (BTC)
             # est haussier. Les bots BTC ne se filtrent pas eux-memes. OFF par defaut.
             if (REGIME_FILTER_ENABLED and self.symbol != REGIME_SYMBOL

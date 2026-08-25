@@ -850,6 +850,26 @@ class CoinbaseClient:
             "timestamp":  datetime.now(timezone.utc).isoformat(),
         }
 
+    async def check_auth(self) -> dict:
+        """Sonde d'authentification read-only pour le preflight de demarrage.
+
+        Appelle `get_accounts(limit=1)` (permission View seule, aucun ordre) via le
+        meme chemin que le bot (retry transitoire de `_run_sync`). Prouve que la cle
+        API authentifie ET a la permission de lecture — ce que `config_validator` ne
+        peut PAS voir (il verifie juste que la cle est presente, pas qu'elle marche).
+
+        - paper : no-op, retourne {"ok": True, "mode": "paper"}.
+        - live  : {"ok": True, "n_accounts": N} si OK, sinon LEVE l'exception SDK
+          (l'appelant classe auth-refusee vs transitoire).
+        """
+        if self.mode != "live":
+            return {"ok": True, "mode": "paper"}
+        if self._real_client is None:
+            raise RuntimeError("client Coinbase non initialise (mode live)")
+        resp = await self._run_sync(self._real_client.get_accounts, limit=1)
+        accounts = getattr(resp, "accounts", None) or []
+        return {"ok": True, "n_accounts": len(accounts)}
+
     async def sync_live_positions(self) -> None:
         """
         Synchronise le suivi local avec les vrais soldes Coinbase.

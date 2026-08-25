@@ -84,6 +84,44 @@ def get_all_paused() -> dict[str, bool]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Grace d'entree au demarrage (ferme le trou F&G du boot)
+# ─────────────────────────────────────────────────────────────────────────────
+# Au boot, le Director ne fait sa 1re evaluation Fear & Greed qu'apres ~45s
+# (sleep initial 15s + un 1er _check qui ne fait qu'amorcer la valeur). Comme un
+# TrendBot ne lit PAS le F&G lui-meme (sa seule protection peur = le kill switch),
+# une entree pouvait passer pendant cette fenetre en plein Extreme Fear (vecu le
+# 02/07 sur SOL/AAVE). Le preflight pose une courte grace quand il n'a pas pu
+# confirmer que le marche est sur : elle bloque UNIQUEMENT les nouvelles entrees
+# (comme le kill switch) — les sorties/SL/TP continuent — jusqu'a ce que le
+# Director statue. Nulle si le preflight a pu lire un F&G non-extreme.
+_entry_grace_until: float = 0.0
+
+
+def set_entry_grace(until_ts: float) -> None:
+    """Bloque les nouvelles entrees jusqu'a `until_ts` (epoch). Ne recule jamais
+    une grace deja posee (on garde la plus tardive)."""
+    global _entry_grace_until
+    _entry_grace_until = max(_entry_grace_until, until_ts)
+
+
+def clear_entry_grace() -> None:
+    global _entry_grace_until
+    _entry_grace_until = 0.0
+
+
+def entry_grace_remaining() -> float:
+    """Secondes restantes de grace d'entree (0 si aucune)."""
+    if _entry_grace_until <= 0:
+        return 0.0
+    return max(0.0, _entry_grace_until - time.time())
+
+
+def entries_allowed() -> bool:
+    """True si de NOUVELLES entrees sont permises : ni kill switch, ni grace de boot."""
+    return not _kill_switch and entry_grace_remaining() <= 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Fear & Greed Index (publie par DirectorAgent, lu par RiskAgent)
 # ─────────────────────────────────────────────────────────────────────────────
 
