@@ -128,6 +128,9 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 .prow:last-child{border-bottom:none;}
 .prow .pl{color:var(--ink2);font-size:.9rem;} .prow .pv{font-family:var(--mono);font-weight:700;font-size:.9rem;}
 .prow .pv.on{color:var(--pos);} .prow .pv.off{color:var(--mut);}
+.prow .pv.tog{cursor:pointer;padding:3px 10px;border-radius:999px;border:1px solid var(--bd);}
+.prow .pv.tog.on{background:rgba(63,208,138,.14);border-color:rgba(63,208,138,.3);}
+.prow .pv.tog.off{background:var(--surf2);}
 
 /* ---- buttons ---- */
 .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:15px;border-radius:14px;
@@ -258,6 +261,7 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
     </div>
     <div class="eyebrow">Track record par bot</div>
     <div id="trackrecord"><div class="muted skel">Chargement…</div></div>
+    <button class="btn" id="tr-export" style="margin-top:12px">⬇ Exporter le track record (JSON vérifiable)</button>
     <div class="eyebrow">Derniers trades</div>
     <div id="trades"><div class="muted skel">Chargement…</div></div>
   </section>
@@ -278,6 +282,7 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
     <div class="eyebrow">Notifications</div>
     <div class="plist"><div class="prow"><span class="pl" id="notif-lbl">—</span><span class="pv" id="notif-state">—</span></div></div>
     <div style="margin-top:12px" id="notif-btn-wrap"></div>
+    <div id="notif-prefs"></div>
     <div class="eyebrow">Santé système</div>
     <div class="plist" id="health"><div class="prow"><span class="pl skel">Chargement…</span><span class="pv">—</span></div></div>
     <div class="eyebrow">À propos</div>
@@ -380,6 +385,19 @@ function renderTrackRecord(ts){
       +'<span class="trmid">'+(s.n_closed||0)+' clôt · '+wr+' win</span>'
       +'<span class="trpnl '+(net>=0?'pos':'neg')+'">'+(net>=0?'+':'')+net.toFixed(2)+'$</span></div>';
   }).join('')+'</div>';
+}
+// Objectif ② — export du track record verifiable (JSON auditable + empreinte SHA256).
+async function exportTrackRecord(){
+  try{
+    const tr=await api('/api/track_record');
+    const blob=new Blob([JSON.stringify(tr,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download='kairos-track-record-'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);
+    toast('Track record exporté ('+(tr.n_closed||0)+' trades) ✓');
+  }catch(e){toast('Échec export : '+(e.message||e));}
 }
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2600);}
 
@@ -643,11 +661,28 @@ async function renderNotif(){
   try{
     const reg=await navigator.serviceWorker.getRegistration('/app');
     const sub=reg?await reg.pushManager.getSubscription():null;
-    if(Notification.permission==='granted'&&sub){lbl.textContent='Activées sur cet appareil';st.textContent='ON';st.className='pv on';wrap.innerHTML='<button class="btn" id="notif-test">Envoyer une notif de test</button>';$('notif-test').onclick=testNotif;}
-    else{lbl.textContent='Recevoir les alertes ici';st.textContent='OFF';st.className='pv off';wrap.innerHTML='<button class="btn pos" id="notif-on">Activer les notifications</button>';$('notif-on').onclick=enableNotif;}
-  }catch(e){lbl.textContent='Notifications';st.textContent='—';wrap.innerHTML='';}
+    if(Notification.permission==='granted'&&sub){lbl.textContent='Activées sur cet appareil';st.textContent='ON';st.className='pv on';wrap.innerHTML='<button class="btn" id="notif-test">Envoyer une notif de test</button>';$('notif-test').onclick=testNotif;renderNotifPrefs();}
+    else{lbl.textContent='Recevoir les alertes ici';st.textContent='OFF';st.className='pv off';wrap.innerHTML='<button class="btn pos" id="notif-on">Activer les notifications</button>';$('notif-on').onclick=enableNotif;$('notif-prefs').innerHTML='';}
+  }catch(e){lbl.textContent='Notifications';st.textContent='—';wrap.innerHTML='';$('notif-prefs').innerHTML='';}
+}
+// P5 — choix des categories de push recues (la categorie "systeme" reste toujours active).
+async function renderNotifPrefs(){
+  const el=$('notif-prefs');if(!el)return;
+  let prefs={};
+  try{const r=await api('/app/push/prefs');prefs=(r&&r.prefs)||{};}catch(e){el.innerHTML='';return;}
+  const items=[['entries','Entrées'],['exits','Sorties'],['gains','Gros gain (+10%)'],['reports','Rapports']];
+  el.innerHTML='<div class="eyebrow" style="margin-top:16px">Catégories reçues</div><div class="plist">'
+    +items.map(([k,l])=>{const on=prefs[k]!==false;return '<div class="prow"><span class="pl">'+l+'</span><span class="pv tog '+(on?'on':'off')+'" data-k="'+k+'">'+(on?'ON':'OFF')+'</span></div>';}).join('')
+    +'<div class="prow"><span class="pl">Système (sécurité)</span><span class="pv on">toujours</span></div></div>';
+  el.querySelectorAll('.pv.tog').forEach(t=>t.onclick=async()=>{
+    const k=t.dataset.k,newOn=!t.classList.contains('on');
+    try{await fetch('/app/push/prefs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[k]:newOn})});
+      t.classList.toggle('on',newOn);t.classList.toggle('off',!newOn);t.textContent=newOn?'ON':'OFF';toast('Préférence enregistrée ✓');}
+    catch(e){toast('Échec : '+(e.message||e));}
+  });
 }
 
+$('tr-export').onclick=exportTrackRecord;
 refresh();setInterval(refresh,5000);renderNotif();
 if('serviceWorker'in navigator&&location.protocol==='https:'){navigator.serviceWorker.register('/app/sw.js',{scope:'/app'}).catch(()=>{});}
 </script>

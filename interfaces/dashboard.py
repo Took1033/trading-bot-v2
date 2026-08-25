@@ -2158,10 +2158,111 @@ def _realized_stats(conn) -> dict[str, dict]:
     return stats
 
 
+def _closed_trades(conn) -> list[dict]:
+    """Round-trips fermes (apparies FIFO) avec le detail AUDITABLE : date de sortie,
+    symbole, qte, entree moyenne, sortie, P&L net. Meme source/logique que
+    _realized_stats (decisions.metadata) — lecture seule. Sert l'export track record
+    verifiable : un tiers recalcule les stats depuis cette liste + verifie l'empreinte."""
+    rows = conn.execute(
+        "SELECT timestamp, symbol, action, metadata FROM decisions "
+        "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') "
+        "AND action IN ('buy','sell') ORDER BY timestamp ASC"
+    ).fetchall()
+
+    lots: dict[str, list[list[float]]] = {}
+    out: list[dict] = []
+    for row in rows:
+        sym = row["symbol"]
+        try:
+            meta  = json.loads(row["metadata"]) if row["metadata"] else {}
+            qty   = float(meta.get("qty", 0))
+            price = float(meta.get("price", 0))
+        except Exception:
+            continue
+        if qty <= 0 or price <= 0:
+            continue
+
+        lots.setdefault(sym, [])
+        if row["action"] == "buy":
+            lots[sym].append([qty, price])
+            continue
+
+        # SELL : apparie FIFO contre les lots d'achat, emet 1 round-trip
+        remaining, cost, matched = qty, 0.0, 0.0
+        while remaining > 1e-12 and lots[sym]:
+            lot  = lots[sym][0]
+            take = min(remaining, lot[0])
+            cost    += take * lot[1]
+            matched += take
+            remaining -= take
+            lot[0]    -= take
+            if lot[0] <= 1e-12:
+                lots[sym].pop(0)
+        if matched > 1e-12:
+            avg_entry = cost / matched
+            net = matched * (price - avg_entry) - ROUND_TRIP_FEE_PCT * cost
+            out.append({
+                "exit_ts":      row["timestamp"],
+                "symbol":       sym,
+                "qty":          round(matched, 10),
+                "entry":        round(avg_entry, 8),
+                "exit":         round(price, 8),
+                "net_pnl_usdc": round(net, 4),
+            })
+    return out
+
+
 async def handle_trade_stats(request: web.Request) -> web.Response:
     """Stats de trades clotures (apparies FIFO) par symbole — lecture seule."""
     with _db() as conn:
         return web.json_response(_realized_stats(conn))
+
+
+async def handle_track_record(request: web.Request) -> web.Response:
+    """Track record AUDITABLE + VERIFIABLE (objectif commercial ②).
+
+    Expose la liste des round-trips fermes + les stats par symbole + une empreinte
+    SHA256 des trades : un tiers recalcule tout depuis 'trades' et verifie que
+    l'empreinte correspond -> preuve non falsifiable du bilan. Lecture seule, aucun
+    prix brut hors metadata d'ordre (coherent avec la regle 'pas d'OHLCV en base')."""
+    import hashlib
+    with _db() as conn:
+        trades     = _closed_trades(conn)
+        per_symbol = _realized_stats(conn)
+        live_since = _live_start_ts(conn)
+        last_snap  = conn.execute(
+            "SELECT total_usdc, timestamp FROM portfolio_snapshots "
+            "ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+
+    n_closed = len(trades)
+    wins     = sum(1 for t in trades if t["net_pnl_usdc"] > 0)
+    net      = round(sum(t["net_pnl_usdc"] for t in trades), 4)
+
+    # Empreinte : sha256 du JSON canonique de la liste des trades (ordre stable).
+    canon = json.dumps(trades, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    fingerprint = "sha256:" + hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+    return web.json_response({
+        "generated_at":  datetime.now(timezone.utc).isoformat(),
+        "mode":          MODE,
+        "live_since":    live_since,
+        "first_trade":   trades[0]["exit_ts"]  if trades else None,
+        "last_trade":    trades[-1]["exit_ts"] if trades else None,
+        "n_closed":      n_closed,
+        "wins":          wins,
+        "win_rate":      round(wins / n_closed, 3) if n_closed else None,
+        "net_pnl_usdc":  net,
+        "equity_latest": (last_snap["total_usdc"] if last_snap else None),
+        "equity_ts":     (last_snap["timestamp"]  if last_snap else None),
+        "round_trip_fee_pct": ROUND_TRIP_FEE_PCT,
+        "per_symbol":    per_symbol,
+        "trades":        trades,
+        "fingerprint":   fingerprint,
+        "verify":        "Recalcule les stats depuis 'trades' et le sha256 de "
+                         "json.dumps(trades,sort_keys=True,separators=(',',':')) "
+                         "pour verifier l'integrite.",
+    })
 
 
 async def handle_trades(request: web.Request) -> web.Response:
@@ -2476,6 +2577,21 @@ async def handle_push_test(request: web.Request) -> web.Response:
         return web.json_response({"sent": 0, "error": str(exc)}, status=500)
 
 
+async def handle_push_prefs(request: web.Request) -> web.Response:
+    """GET : preferences de notification par categorie. POST : les met a jour.
+    La categorie 'system' (securite) n'est pas configurable — toujours delivree."""
+    try:
+        import push_manager
+        if request.method == "POST":
+            body = await request.json()
+            prefs = push_manager.set_prefs(body if isinstance(body, dict) else {})
+        else:
+            prefs = push_manager.get_prefs()
+        return web.json_response({"ok": True, "prefs": prefs})
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+
 async def handle_notifications(request: web.Request) -> web.Response:
     """Historique des notifs/rapports (alertes, resume quotidien, bilan hebdo...)
     pour l'onglet Journal de l'appli — remplace le fil Telegram."""
@@ -2503,6 +2619,8 @@ def build_app() -> web.Application:
     app.router.add_get("/app/push/key",            handle_push_key)
     app.router.add_post("/app/push/subscribe",     handle_push_subscribe)
     app.router.add_post("/app/push/test",          handle_push_test)
+    app.router.add_get("/app/push/prefs",          handle_push_prefs)
+    app.router.add_post("/app/push/prefs",         handle_push_prefs)
     # API lecture
     app.router.add_get("/api/swarm",               handle_swarm)
     app.router.add_get("/api/portfolio",           handle_portfolio)
@@ -2515,6 +2633,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/signal_debug",        handle_signal_debug)
     app.router.add_get("/api/trades",              handle_trades)
     app.router.add_get("/api/trade_stats",         handle_trade_stats)
+    app.router.add_get("/api/track_record",        handle_track_record)
     app.router.add_get("/api/notifications",       handle_notifications)
     app.router.add_get("/api/bot/{bot_id}",        handle_bot_api)
     # API controles

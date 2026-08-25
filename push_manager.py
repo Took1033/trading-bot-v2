@@ -23,9 +23,16 @@ log = structlog.get_logger()
 _DATA       = Path(os.getenv("DB_PATH", "memory/trading.db")).parent
 _VAPID_FILE = _DATA / "vapid.json"
 _SUBS_FILE  = _DATA / "push_subs.json"
+_PREFS_FILE = _DATA / "push_prefs.json"
 _SUBJECT    = os.getenv("PUSH_VAPID_SUBJECT", "mailto:brice.cuny@gmail.com")
 
 _vapid_cache: dict | None = None
+
+# Preferences de notification par CATEGORIE (P5). Global pour l'instant (1 seul
+# utilisateur) ; en multi-user ce serait par abonnement. La categorie "system"
+# (kill switch, pannes, preflight, boot/arret) est TOUJOURS delivree — on ne laisse
+# pas museler les alertes de securite.
+_DEFAULT_PREFS = {"entries": True, "exits": True, "gains": True, "reports": True}
 
 
 def _ensure_vapid() -> dict:
@@ -97,12 +104,73 @@ def has_subscribers() -> bool:
     return bool(_load_subs())
 
 
-def send(title: str, body: str = "", url: str = "/app") -> int:
+# ── Preferences par categorie (P5) ───────────────────────────────────────────
+
+def get_prefs() -> dict:
+    """Preferences de categories (defaut : tout ON). 'system' n'y figure pas : il
+    est toujours delivre."""
+    prefs = dict(_DEFAULT_PREFS)
+    if _PREFS_FILE.exists():
+        try:
+            saved = json.loads(_PREFS_FILE.read_text(encoding="utf-8"))
+            if isinstance(saved, dict):
+                for k in prefs:
+                    if isinstance(saved.get(k), bool):
+                        prefs[k] = saved[k]
+        except Exception:
+            pass
+    return prefs
+
+
+def set_prefs(new: dict) -> dict:
+    """Met a jour les preferences (ignore les cles inconnues). Retourne l'etat final."""
+    prefs = get_prefs()
+    if isinstance(new, dict):
+        for k in _DEFAULT_PREFS:
+            if isinstance(new.get(k), bool):
+                prefs[k] = new[k]
+    try:
+        _DATA.mkdir(parents=True, exist_ok=True)
+        _PREFS_FILE.write_text(json.dumps(prefs), encoding="utf-8")
+        log.info("push_prefs_saved", prefs=prefs)
+    except Exception as exc:
+        log.warning("push_prefs_save_failed", error=str(exc))
+    return prefs
+
+
+def categorize(title: str, body: str = "") -> str:
+    """Classe une notif en {system, reports, entries, exits, gains} d'apres son texte.
+    Best-effort ; l'inconnu tombe en 'system' (toujours delivre, jamais rate une alerte)."""
+    t = f"{title}\n{body}".lower()
+    if any(k in t for k in ("kill switch", "kill:", "drawdown", "preflight", "démarr",
+                            "demarr", "arrêté", "arrete", "crash", "config invalide",
+                            "config au démarrage", "avertissement config")):
+        return "system"
+    if any(k in t for k in ("rapport", "résumé", "resume", "hebdo", "quotidien", "bilan")):
+        return "reports"
+    if any(k in t for k in ("entrée", "entree", "entry", "achat")):
+        return "entries"
+    if any(k in t for k in ("sortie", "clôtur", "clotur", "exit", "vente")):
+        return "exits"
+    if any(k in t for k in ("position à +", "position a +", "🚀", "gain")):
+        return "gains"
+    return "system"
+
+
+def send(title: str, body: str = "", url: str = "/app", category: str | None = None) -> int:
     """Envoie une notif push a tous les abonnes. Renvoie le nb de succes.
     Jamais d'exception. Purge les abonnes expires (404/410). Synchrone (a lancer
-    dans un thread depuis l'event loop asyncio)."""
+    dans un thread depuis l'event loop asyncio).
+
+    Filtre par categorie (P5) : si la categorie deduite est desactivee dans les
+    preferences, on n'envoie RIEN (return 0). 'system' passe toujours."""
     subs = _load_subs()
     if not subs:
+        return 0
+
+    cat = category or categorize(title, body)
+    if cat != "system" and not get_prefs().get(cat, True):
+        log.debug("push_skipped_by_prefs", category=cat)
         return 0
     try:
         from py_vapid import Vapid02
