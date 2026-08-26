@@ -345,6 +345,8 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 
   <!-- REGLAGES -->
   <section class="screen" id="sc-set">
+    <div class="eyebrow">Formation</div>
+    <div class="learn" id="lessons"></div>
     <div class="eyebrow">Comprendre Kairos</div>
     <div class="intro">
       <p><b>Suivi de tendance.</b> Kairos achète quand le prix passe au-dessus de sa moyenne des 50 derniers jours, et garde la position tant qu'il reste au-dessus. Il ne devine ni les creux ni les sommets : il suit la vague.</p>
@@ -733,6 +735,17 @@ function openGloss(key){const g=GLOSSARY[key];if(!g)return;$('g-term').textConte
 function closeGloss(){$('gloscrim').classList.remove('open');$('glosheet').classList.remove('open');}
 function renderGlossaryList(){const el=$('glossary-list');if(!el)return;
   el.innerHTML=GLOSS_ORDER.map(k=>'<div class="lrow" data-gloss="'+k+'"><span class="lt">'+esc(GLOSSARY[k].t)+'</span><span class="lc">ⓘ</span></div>').join('');}
+// Niveau C — mini-cours "Formation" (lecons courtes, ouvertes dans la meme feuille).
+const LESSONS={
+ works:{t:'Comment marche Kairos',b:'<p>Kairos fait du <b>suivi de tendance</b>. Pour chaque crypto, il regarde sa <b>moyenne des 50 derniers jours</b> (la SMA50).</p><p><b>Il achète</b> quand le prix passe <b>au-dessus</b> de cette moyenne (la tendance devient haussière), et <b>garde</b> tant que le prix reste au-dessus.</p><p><b>Il vend</b> quand le prix repasse <b>sous</b> la moyenne (la tendance se retourne). Pas de take-profit : on laisse courir un gain tant que la tendance tient.</p><p>Le pari : quelques <b>grosses vagues</b> gagnantes rapportent plus que les nombreuses petites pertes. On ne devine ni les creux ni les sommets — on suit.</p>'},
+ waits:{t:'Pourquoi il attend souvent',b:'<p>~<b>60 à 70 % du temps</b>, les bots sont à l\'écart. C\'est <b>voulu</b>, pas une panne.</p><p>En marché sans tendance claire (ou baissier), rester investi ne fait que perdre aux frais et aux faux signaux. Le suivi de tendance <b>gagne son argent</b> pendant les rares grandes tendances, et <b>protège le capital</b> le reste du temps en restant en cash.</p><p>L\'ennemi n\'est pas l\'attente — c\'est l\'<b>impatience</b> : forcer un trade quand il n\'y a pas de tendance.</p>'},
+ protect:{t:'Les protections',b:'<p>Une position est protégée par <b>couches</b> :</p><p><b>1. Sortie SMA50</b> — vend au retournement de tendance : le « stop » naturel du suivi de tendance.</p><p><b>2. Kill switch</b> — coupe-circuit global : met les <b>entrées</b> en pause si drawdown, perte ou peur (Fear &amp; Greed) extrêmes.</p><p><b>3. Stop catastrophe</b> (optionnel) — disjoncteur large (~−18 %) contre un <b>flash-crash intraday</b> que la SMA lente raterait.</p><p><b>4. Trailing / take-profit</b> (optionnels, par bot) — pour verrouiller un gain.</p><p><b>Pas de stop serré</b> : il te sortirait sur les respirations normales d\'une hausse et tuerait la stratégie.</p>'},
+ track:{t:'Lire ton track record',b:'<p>Le vrai résultat, c\'est le <b>P&L réalisé</b> (trades clôturés, encaissé) — pas le latent, qui bouge avec le prix.</p><p>Le <b>win rate</b> se lit avec prudence : un suivi de tendance peut être à <b>40 % de trades gagnants ET gagnant</b>, si les gagnants sont bien plus gros que les perdants. Un win rate élevé n\'est pas un but en soi.</p><p>Le <b>drawdown</b> (baisse depuis le pic) mesure la douleur à encaisser. Sur du trend crypto, 30-50 % sont normaux historiquement — c\'est le prix des grosses vagues.</p><p>Enfin : le track record est <b>borné à la période live</b> et <b>exportable + signé</b> (empreinte) — vérifiable, pas une promesse.</p>'},
+};
+const LESSON_ORDER=['works','waits','protect','track'];
+function openLesson(key){const l=LESSONS[key];if(!l)return;$('g-term').textContent=l.t;$('g-def').innerHTML=l.b;$('glosheet').scrollTop=0;$('gloscrim').classList.add('open');$('glosheet').classList.add('open');}
+function renderLessons(){const el=$('lessons');if(!el)return;
+  el.innerHTML=LESSON_ORDER.map((k,i)=>'<div class="lrow" data-lesson="'+k+'"><span class="lt">'+(i+1)+'. '+esc(LESSONS[k].t)+'</span><span class="lc">›</span></div>').join('');}
 // Axe 2 — explication EN SITUATION d'un bot (dynamique).
 function botExplain(b){
   const p=b.position||{},hasPos=p.qty>0,dist=(typeof b.dist_pct==='number')?b.dist_pct:null;
@@ -1053,13 +1066,17 @@ $('login-pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 $('biolock-go').onclick=tryBioUnlock;
 $('biolock-pw').onclick=()=>{hideBioLock();showLogin();};
 // Glossaire : delegation (un tap sur un [data-gloss] ouvre la definition).
-document.addEventListener('click',e=>{const el=e.target.closest('[data-gloss]');if(el){e.stopPropagation();openGloss(el.dataset.gloss);}});
+document.addEventListener('click',e=>{
+  const g=e.target.closest('[data-gloss]');if(g){e.stopPropagation();openGloss(g.dataset.gloss);return;}
+  const l=e.target.closest('[data-lesson]');if(l){e.stopPropagation();openLesson(l.dataset.lesson);}
+});
 $('gloscrim').onclick=closeGloss;
 const _gg=document.querySelector('#glosheet .g-grab');if(_gg)_gg.onclick=closeGloss;
 $('tour-next').onclick=()=>tourStep(_tourI+1);
 $('tour-skip').onclick=finishTour;
 $('tour-replay').onclick=startTour;
 renderGlossaryList();
+renderLessons();
 boot();
 if('serviceWorker'in navigator&&location.protocol==='https:'){navigator.serviceWorker.register('/app/sw.js',{scope:'/app'}).catch(()=>{});}
 </script>
