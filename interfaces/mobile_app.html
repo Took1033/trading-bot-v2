@@ -643,6 +643,8 @@ const GLOSSARY={
  feargreed:{t:'Fear & Greed',d:'Indice de marché de 0 (peur extrême) à 100 (avidité extrême). Sous 20, Kairos met les nouvelles entrées en pause — c\'est une heuristique de prudence, pas une science exacte.'},
  regime:{t:'Régime marché',d:'Le climat général, jugé via BTC : haussier si BTC est au-dessus de sa moyenne. Sert de filtre optionnel pour n\'ouvrir les alts que quand le marché porte.'},
  killswitch:{t:'Kill switch',d:'Coupe-circuit global. Met toutes les nouvelles ENTRÉES en pause (drawdown trop fort, peur extrême, grosse perte). Les sorties de protection continuent de fonctionner.'},
+ protections:{t:'Protections (les couches)',d:'Kairos protège une position par couches : 1) sortie SMA50 — vend au retournement de tendance ; 2) kill switch global — met les entrées en pause si drawdown / perte / peur extrême ; 3) stop catastrophe — disjoncteur intraday (optionnel) ; 4) trailing / take-profit — optionnels, par bot. Pas de stop serré : il tuerait le suivi de tendance (il te sortirait sur les respirations normales d\'une hausse).'},
+ stopcata:{t:'Stop catastrophe',d:'Un disjoncteur : coupe une position qui perd plus de X % depuis l\'entrée, même si la moyenne 50j (lente) n\'a pas encore donné le signal de sortie. Volontairement LARGE (ex. −18 %) : il ne se déclenche jamais sur un mouvement normal — une vraie cassure de tendance croise la SMA bien avant — seulement sur un krach intraday violent. Backtesté sur 5 ans : n\'ampute PAS le rendement.'},
  position:{t:'Position',d:'Ce que le bot détient : une quantité de crypto + un prix d\'entrée moyen. Sa valeur bouge avec le prix ; le P&L se calcule par rapport à l\'entrée.'},
  pnllatent:{t:'P&L latent',d:'Le gain/perte des positions OUVERTES si tu les vendais maintenant (net de frais). Non réalisé : il bouge avec le prix, pas encore encaissé.'},
  pnlrealise:{t:'P&L réalisé',d:'Le gain/perte des trades DÉJÀ clôturés (encaissé). C\'est le vrai résultat cumulé, net de frais.'},
@@ -650,7 +652,7 @@ const GLOSSARY={
  winrate:{t:'Win rate',d:'Le % de trades clôturés gagnants. À nuancer : un suivi de tendance peut avoir un win rate moyen mais gagner gros sur quelques trades et perdre peu sur les autres.'},
  preflight:{t:'Contrôles de démarrage',d:'Au lancement, Kairos vérifie que la base de données et Coinbase répondent, et bloque les entrées quelques secondes le temps de confirmer que le marché n\'est pas en panique.'},
 };
-const GLOSS_ORDER=['trend','sma50','signal','distsma','margesortie','sortiesma','trailing','takeprofit','drawdown','exposition','feargreed','regime','killswitch','position','pnllatent','pnlrealise','trades','winrate','preflight'];
+const GLOSS_ORDER=['trend','protections','sma50','signal','distsma','margesortie','sortiesma','stopcata','trailing','takeprofit','killswitch','drawdown','exposition','feargreed','regime','position','pnllatent','pnlrealise','trades','winrate','preflight'];
 function info(k){return '<span class="info" data-gloss="'+k+'">i</span>';}
 function openGloss(key){const g=GLOSSARY[key];if(!g)return;$('g-term').textContent=g.t;$('g-def').textContent=g.d;$('gloscrim').classList.add('open');$('glosheet').classList.add('open');}
 function closeGloss(){$('gloscrim').classList.remove('open');$('glosheet').classList.remove('open');}
@@ -729,10 +731,10 @@ function renderParams(){
   const c=CFG||{};const row=(l,v,cls)=>'<div class="prow"><span class="pl">'+l+'</span><span class="pv '+(cls||'')+'">'+v+'</span></div>';
   $('params').innerHTML=
     row('Taille / trade',(c.position_pct||'—')+'%')+
-    row('Exposition max',(c.max_exposure||'—')+'%')+
-    row('SMA tendance','SMA'+(c.sma_period||'—'))+
-    row('Bande de sortie',(c.exit_buffer!=null?c.exit_buffer+'%':'—'))+
-    row('Stop catastrophe','-'+(c.stop_loss||'—')+'%')+
+    row('Exposition max'+info('exposition'),(c.max_exposure||'—')+'%')+
+    row('SMA tendance'+info('sma50'),'SMA'+(c.sma_period||'—'))+
+    row('Bande de sortie'+info('sortiesma'),(c.exit_buffer!=null?c.exit_buffer+'%':'—'))+
+    row('Stop catastrophe'+info('stopcata'),'-'+(c.stop_loss||'—')+'%')+
     row('Fréquence check',(c.check_min||'—')+' min')+
     row('Frais taker',(c.taker_fee!=null?c.taker_fee+'%':'—'))+
     row('Filtre régime',c.regime?'ON':'OFF',c.regime?'on':'off')+
