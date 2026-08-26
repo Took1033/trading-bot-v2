@@ -193,10 +193,12 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 .skel{color:var(--mut);}
 
 /* ---- ecran de connexion ---- */
-#login{position:fixed;inset:0;z-index:60;background:rgba(7,10,16,.94);
+#login,#biolock{position:fixed;inset:0;z-index:60;background:rgba(7,10,16,.94);
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   display:none;align-items:center;justify-content:center;padding:24px;}
-#login.show{display:flex;}
+#login.show,#biolock.show{display:flex;}
+#biolock .fp{font-size:2.6rem;margin-bottom:8px;line-height:1;}
+#biolock .alt{margin-top:10px;background:transparent;border-color:var(--bd);color:var(--ink2);}
 .login-card{width:100%;max-width:340px;background:var(--surf);border:1px solid var(--bd);
   border-radius:20px;padding:28px 22px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);}
 .login-card .lg{font-family:var(--disp);font-weight:700;font-size:1.6rem;letter-spacing:-.01em;}
@@ -297,6 +299,9 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
     <div class="plist"><div class="prow"><span class="pl" id="notif-lbl">—</span><span class="pv" id="notif-state">—</span></div></div>
     <div style="margin-top:12px" id="notif-btn-wrap"></div>
     <div id="notif-prefs"></div>
+    <div class="eyebrow">Sécurité</div>
+    <div class="plist"><div class="prow"><span class="pl" id="bio-lbl">Déverrouillage par empreinte</span><span class="pv" id="bio-state">—</span></div></div>
+    <div style="margin-top:12px" id="bio-btn-wrap"></div>
     <div class="eyebrow">Santé système</div>
     <div class="plist" id="health"><div class="prow"><span class="pl skel">Chargement…</span><span class="pv">—</span></div></div>
     <div class="eyebrow">À propos</div>
@@ -339,6 +344,17 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
     <input id="login-pw" type="password" placeholder="Mot de passe" autocomplete="current-password" inputmode="text">
     <button class="btn pos" id="login-go">Se connecter</button>
     <div class="login-err" id="login-err"></div>
+  </div>
+</div>
+
+<div id="biolock">
+  <div class="login-card">
+    <div class="fp">🔑</div>
+    <div class="lg">Kairos</div>
+    <div class="sb">Déverrouille avec ton empreinte</div>
+    <button class="btn pos" id="biolock-go">Déverrouiller</button>
+    <div class="login-err" id="biolock-err"></div>
+    <button class="btn alt" id="biolock-pw">Utiliser le mot de passe</button>
   </div>
 </div>
 
@@ -442,7 +458,7 @@ async function doLogin(){
   try{
     const r=await fetch('/app/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
     const j=await r.json().catch(()=>({}));
-    if(r.ok&&j.token){TOKEN=j.token;localStorage.setItem(TOKEN_KEY,TOKEN);$('login-pw').value='';hideLogin();refresh();renderNotif();}
+    if(r.ok&&j.token){TOKEN=j.token;localStorage.setItem(TOKEN_KEY,TOKEN);$('login-pw').value='';hideLogin();hideBioLock();if(!_started)startApp();else refresh();renderNotif();}
     else{err.textContent=j.error||('Échec ('+r.status+')');}
   }catch(e){err.textContent='Réseau indisponible';}
 }
@@ -461,6 +477,76 @@ async function postJSON(path,obj){
   return r.json().catch(()=>({}));
 }
 async function act(path,label){try{const r=await fetch(path,{method:'POST',headers:authHeaders()});if(r.status===401){showLogin();return;}if(!r.ok)throw new Error(r.status);toast(label);setTimeout(refresh,400);}catch(e){toast('Échec : '+e.message);}}
+
+// ---- deverrouillage par empreinte (WebAuthn, authentificateur plateforme) ----
+// Verrou LOCAL par-dessus le mot de passe/jeton serveur (qui reste la vraie barriere) :
+// empeche l'ouverture de l'appli sur un telephone deverrouille sans ton empreinte.
+const BIO_CRED='kairos_bio_cred', BIO_FLAG='kairos_bio';
+function bioSupported(){return !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);}
+function bioEnabled(){return localStorage.getItem(BIO_FLAG)==='1' && !!localStorage.getItem(BIO_CRED);}
+function _b64u(buf){return btoa(String.fromCharCode.apply(null,new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+function _unb64u(s){s=s.replace(/-/g,'+').replace(/_/g,'/');const pad='='.repeat((4-s.length%4)%4);return Uint8Array.from([...atob(s+pad)].map(c=>c.charCodeAt(0)));}
+function _rand(n){const a=new Uint8Array(n);crypto.getRandomValues(a);return a;}
+async function bioRegister(){
+  if(!bioSupported()){toast('Empreinte indisponible (nécessite HTTPS)');return;}
+  try{
+    const cred=await navigator.credentials.create({publicKey:{
+      challenge:_rand(32), rp:{name:'Kairos'},
+      user:{id:_rand(16),name:'kairos',displayName:'Kairos'},
+      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+      authenticatorSelection:{authenticatorAttachment:'platform',userVerification:'required'},
+      timeout:60000,
+    }});
+    localStorage.setItem(BIO_CRED,_b64u(cred.rawId));
+    localStorage.setItem(BIO_FLAG,'1');
+    toast('Empreinte activée ✓'); renderBio();
+  }catch(e){toast('Échec activation : '+(e.name||e.message||e));}
+}
+async function bioUnlock(){
+  const id=localStorage.getItem(BIO_CRED);
+  if(!id) return false;
+  try{
+    await navigator.credentials.get({publicKey:{
+      challenge:_rand(32),
+      allowCredentials:[{id:_unb64u(id),type:'public-key'}],
+      userVerification:'required', timeout:60000,
+    }});
+    return true;
+  }catch(e){ return false; }
+}
+function bioDisable(){localStorage.removeItem(BIO_CRED);localStorage.removeItem(BIO_FLAG);renderBio();toast('Empreinte désactivée');}
+function showBioLock(){$('biolock').classList.add('show');}
+function hideBioLock(){$('biolock').classList.remove('show');}
+async function tryBioUnlock(){
+  $('biolock-err').textContent='';
+  const ok=await bioUnlock();
+  if(ok){hideBioLock();startApp();}
+  else{$('biolock-err').textContent='Échec — réessaie ou utilise le mot de passe.';}
+}
+function renderBio(){
+  const lbl=$('bio-lbl'),st=$('bio-state'),wrap=$('bio-btn-wrap');
+  if(!wrap)return;
+  if(!bioSupported()){lbl.textContent='Empreinte (nécessite HTTPS)';st.textContent='—';st.className='pv off';wrap.innerHTML='';return;}
+  if(bioEnabled()){
+    st.textContent='ON';st.className='pv on';
+    wrap.innerHTML='<button class="btn" id="bio-off">Désactiver l\'empreinte</button>';
+    $('bio-off').onclick=bioDisable;
+  }else{
+    st.textContent='OFF';st.className='pv off';
+    wrap.innerHTML='<button class="btn pos" id="bio-on">Activer le déverrouillage par empreinte</button>';
+    $('bio-on').onclick=()=>{ if(!TOKEN){toast('Connecte-toi d\'abord');showLogin();return;} bioRegister(); };
+  }
+}
+// Demarrage : si l'empreinte est active et une session existe, exiger le deverrouillage.
+let _started=false;
+function startApp(){
+  if(_started)return; _started=true;
+  refresh(); setInterval(refresh,5000); renderNotif(); renderBio();
+}
+function boot(){
+  if(bioEnabled() && TOKEN && bioSupported()){ showBioLock(); tryBioUnlock(); }
+  else { startApp(); }
+}
 
 function botPnl(b){const p=b.position||{};if(!(p.qty>0)||!b.current_price)return null;return (b.current_price-(p.avg_price||0))/(p.avg_price||1)*100;}
 
@@ -743,7 +829,9 @@ async function renderNotifPrefs(){
 $('tr-export').onclick=exportTrackRecord;
 $('login-go').onclick=doLogin;
 $('login-pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
-refresh();setInterval(refresh,5000);renderNotif();
+$('biolock-go').onclick=tryBioUnlock;
+$('biolock-pw').onclick=()=>{hideBioLock();showLogin();};
+boot();
 if('serviceWorker'in navigator&&location.protocol==='https:'){navigator.serviceWorker.register('/app/sw.js',{scope:'/app'}).catch(()=>{});}
 </script>
 </body></html>
