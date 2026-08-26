@@ -64,8 +64,9 @@ def _make_db(path: str) -> sqlite3.Connection:
 def test_closed_trades() -> None:
     print("\n[1] _closed_trades — appariement FIFO + frais")
     conn = _make_db(os.environ["DB_PATH"])
-    trades = dashboard._closed_trades(conn)
+    trades, unmatched = dashboard._closed_trades(conn)
     check("2 round-trips fermes", len(trades) == 2)
+    check("aucune vente non appariee", unmatched == 0)
     by_sym = {t["symbol"]: t for t in trades}
     btc, eth = by_sym.get("BTC-USDC"), by_sym.get("ETH-USDC")
     rt = dashboard.ROUND_TRIP_FEE_PCT   # frais reels du .env (Coinbase One ~0)
@@ -79,13 +80,22 @@ def test_closed_trades() -> None:
     stats = dashboard._realized_stats(conn)
     check("stats BTC : 1 clot, win_rate 1.0", stats.get("BTC-USDC", {}).get("win_rate") == 1.0)
     check("stats ETH : win_rate 0.0", stats.get("ETH-USDC", {}).get("win_rate") == 0.0)
+
+    # borne 'since' : les achats (08-01/08-02) sont exclus, restent 2 ventes NON
+    # appariees (08-05/08-06) -> aucune paire, mais comptees (pas perdues en silence)
+    t2, u2 = dashboard._closed_trades(conn, since="2026-08-04T00:00:00")
+    check("since exclut les achats anterieurs -> 0 round-trip", len(t2) == 0)
+    check("since -> 2 ventes non appariees comptees", u2 == 2)
+    s2 = dashboard._realized_stats(conn, since="2026-08-04T00:00:00")
+    check("since -> aucun round-trip complet (pas de melange paper)",
+          all(v.get("n_closed", 0) == 0 for v in s2.values()))
     conn.close()
 
 
 def test_fingerprint_deterministic() -> None:
     print("\n[2] empreinte SHA256 — deterministe & verifiable par un tiers")
     conn = _make_db(os.path.join(_TMP, "db2.db"))
-    trades = dashboard._closed_trades(conn)
+    trades, _ = dashboard._closed_trades(conn)
     conn.close()
 
     def fp(tr):

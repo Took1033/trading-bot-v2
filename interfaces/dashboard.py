@@ -1828,7 +1828,9 @@ async def handle_portfolio(request: web.Request) -> web.Response:
         ).fetchone()
         # P&L realise net cumule (trades fermes, tous roles executants)
         try:
-            realized = round(sum(v["net_pnl_usdc"] for v in _realized_stats(conn).values()), 2)
+            # P&L realise NET cumule, borne a l'ere live (evite de melanger le paper)
+            realized = round(sum(v["net_pnl_usdc"]
+                                 for v in _realized_stats(conn, since=_live_start_ts(conn)).values()), 2)
         except Exception:
             realized = None
         live_ts     = _live_start_ts(conn)
@@ -2096,22 +2098,29 @@ async def handle_signal_debug(request: web.Request) -> web.Response:
     })
 
 
-def _realized_stats(conn) -> dict[str, dict]:
+def _realized_stats(conn, since: str | None = None) -> dict[str, dict]:
     """Apparie les BUY/SELL (FIFO) par symbole et calcule le P&L net realise.
 
     Source : decisions.metadata (qty/price), idem que le journal CSV. Le DB ne
     stocke pas de prix bruts hors metadata d'ordre, donc rien de nouveau n'est
     persiste ici : lecture seule, zero impact sur les ordres.
 
+    `since` (timestamp ISO) : ne compter que les ordres a partir de cette date
+    (borne d'ere live) — sinon le P&L realise et le track record melangeraient les
+    trades paper historiques (~10000 fictif) et les trades live reels.
+
     Retourne {symbol: {n_closed, wins, win_rate, net_pnl_usdc}}.
     """
     # roles executants : orchestrator (scalpeur historique) + trend_bot (bots
     # actuels) + user (cloture manuelle) — sinon P&L realise faux pour les trend.
-    rows = conn.execute(
-        "SELECT symbol, action, metadata FROM decisions "
-        "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') "
-        "AND action IN ('buy','sell') ORDER BY timestamp ASC"
-    ).fetchall()
+    q = ("SELECT symbol, action, metadata FROM decisions "
+         "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') "
+         "AND action IN ('buy','sell')")
+    params: tuple = ()
+    if since:
+        q += " AND timestamp >= ?"
+        params = (since,)
+    rows = conn.execute(q + " ORDER BY timestamp ASC", params).fetchall()
 
     lots: dict[str, list[list[float]]] = {}   # symbol -> [[qty, price], ...]
     stats: dict[str, dict] = {}
@@ -2160,19 +2169,27 @@ def _realized_stats(conn) -> dict[str, dict]:
     return stats
 
 
-def _closed_trades(conn) -> list[dict]:
+def _closed_trades(conn, since: str | None = None) -> tuple[list[dict], int]:
     """Round-trips fermes (apparies FIFO) avec le detail AUDITABLE : date de sortie,
     symbole, qte, entree moyenne, sortie, P&L net. Meme source/logique que
     _realized_stats (decisions.metadata) — lecture seule. Sert l'export track record
-    verifiable : un tiers recalcule les stats depuis cette liste + verifie l'empreinte."""
-    rows = conn.execute(
-        "SELECT timestamp, symbol, action, metadata FROM decisions "
-        "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') "
-        "AND action IN ('buy','sell') ORDER BY timestamp ASC"
-    ).fetchall()
+    verifiable : un tiers recalcule les stats depuis cette liste + verifie l'empreinte.
+
+    `since` : borne d'ere live (cf _realized_stats). Retourne (trades, n_unmatched) :
+    n_unmatched = ventes sans lot d'achat apparie (position re-adoptee au reboot, ou
+    achat anterieur a la borne live) — comptees pour NE PAS les perdre en silence."""
+    q = ("SELECT timestamp, symbol, action, metadata FROM decisions "
+         "WHERE task_type='order' AND role IN ('orchestrator','trend_bot','user') "
+         "AND action IN ('buy','sell')")
+    params: tuple = ()
+    if since:
+        q += " AND timestamp >= ?"
+        params = (since,)
+    rows = conn.execute(q + " ORDER BY timestamp ASC", params).fetchall()
 
     lots: dict[str, list[list[float]]] = {}
     out: list[dict] = []
+    unmatched = 0
     for row in rows:
         sym = row["symbol"]
         try:
@@ -2211,13 +2228,18 @@ def _closed_trades(conn) -> list[dict]:
                 "exit":         round(price, 8),
                 "net_pnl_usdc": round(net, 4),
             })
-    return out
+        else:
+            # Vente sans lot d'achat apparie (position re-adoptee au reboot, ou achat
+            # anterieur a la borne live). On la COMPTE au lieu de la perdre en silence.
+            unmatched += 1
+    return out, unmatched
 
 
 async def handle_trade_stats(request: web.Request) -> web.Response:
-    """Stats de trades clotures (apparies FIFO) par symbole — lecture seule."""
+    """Stats de trades clotures (apparies FIFO) par symbole — lecture seule.
+    Borne a l'ere live (evite de melanger les trades paper historiques)."""
     with _db() as conn:
-        return web.json_response(_realized_stats(conn))
+        return web.json_response(_realized_stats(conn, since=_live_start_ts(conn)))
 
 
 async def handle_track_record(request: web.Request) -> web.Response:
@@ -2229,9 +2251,9 @@ async def handle_track_record(request: web.Request) -> web.Response:
     prix brut hors metadata d'ordre (coherent avec la regle 'pas d'OHLCV en base')."""
     import hashlib
     with _db() as conn:
-        trades     = _closed_trades(conn)
-        per_symbol = _realized_stats(conn)
-        live_since = _live_start_ts(conn)
+        live_since        = _live_start_ts(conn)   # None en paper -> aucun filtre
+        trades, unmatched = _closed_trades(conn, since=live_since)
+        per_symbol        = _realized_stats(conn, since=live_since)
         last_snap  = conn.execute(
             "SELECT total_usdc, timestamp FROM portfolio_snapshots "
             "ORDER BY timestamp DESC LIMIT 1"
@@ -2254,6 +2276,7 @@ async def handle_track_record(request: web.Request) -> web.Response:
         "n_closed":      n_closed,
         "wins":          wins,
         "win_rate":      round(wins / n_closed, 3) if n_closed else None,
+        "unmatched_sells": unmatched,
         "net_pnl_usdc":  net,
         "equity_latest": (last_snap["total_usdc"] if last_snap else None),
         "equity_ts":     (last_snap["timestamp"]  if last_snap else None),
