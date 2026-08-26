@@ -218,7 +218,13 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 #glosheet.open{transform:none;}
 #glosheet .g-grab{width:46px;height:5px;border-radius:3px;background:var(--bd-hi);margin:10px auto 16px;}
 #glosheet .g-term{font-family:var(--disp);font-weight:700;font-size:1.25rem;letter-spacing:-.01em;}
-#glosheet .g-def{color:var(--ink2);font-size:.95rem;line-height:1.62;margin-top:10px;white-space:pre-wrap;}
+#glosheet .g-def{margin-top:10px;}
+#glosheet .g-def-txt{color:var(--ink2);font-size:.95rem;line-height:1.62;white-space:pre-wrap;}
+#glosheet .g-schema{margin:14px 0 2px;background:var(--surf2);border:1px solid var(--bd);border-radius:12px;padding:12px 12px 4px;}
+#glosheet .g-schema svg{width:100%;height:auto;display:block;}
+#glosheet .g-schema .cap{font-family:var(--mono);font-size:.62rem;color:var(--mut);margin:8px 2px 4px;text-align:center;line-height:1.4;}
+#glosheet .g-ex{margin-top:14px;padding:11px 14px;border-left:3px solid var(--acc);background:var(--surf2);border-radius:0 10px 10px 0;font-size:.9rem;color:var(--ink);line-height:1.55;}
+#glosheet .g-ex-k{display:block;font-family:var(--mono);font-size:.6rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--acc);margin-bottom:5px;}
 /* ---- section Comprendre ---- */
 .learn{background:var(--surf);border:1px solid var(--bd);border-radius:15px;overflow:hidden;}
 .learn .lrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px;
@@ -654,7 +660,50 @@ const GLOSSARY={
 };
 const GLOSS_ORDER=['trend','protections','sma50','signal','distsma','margesortie','sortiesma','stopcata','trailing','takeprofit','killswitch','drawdown','exposition','feargreed','regime','position','pnllatent','pnlrealise','trades','winrate','preflight'];
 function info(k){return '<span class="info" data-gloss="'+k+'">i</span>';}
-function openGloss(key){const g=GLOSSARY[key];if(!g)return;$('g-term').textContent=g.t;$('g-def').textContent=g.d;$('gloscrim').classList.add('open');$('glosheet').classList.add('open');}
+// Niveau A — exemples chiffres + mini-schema par terme (couche par-dessus GLOSSARY).
+const GLOSS_EXTRA={
+ trend:{schema:'sma',ex:'BTC passe au-dessus de sa moyenne 50j → achat. Il reste au-dessus 3 mois (+40 %) → on tient. Il repasse dessous → vente. On a pris le gros de la vague sans deviner le sommet.'},
+ sma50:{schema:'sma',ex:'Prix 63 000, moyenne 50j 58 000 → prix 8,6 % au-dessus → tendance haussière, on peut être en position.'},
+ signal:{schema:'sma',ex:'Prix > SMA50 → signal 🟢 achat. Le bot n\'achète que s\'il n\'a pas déjà de position ouverte.'},
+ distsma:{schema:'sma',ex:'Prix 100, SMA 95 → distance +5,3 %. Prix 90, SMA 95 → distance −5,3 % (sous la moyenne).'},
+ margesortie:{schema:'sma',ex:'Prix 100, SMA 95 → il faut −5 % pour croiser la SMA et déclencher la sortie. Marge = 5 %.'},
+ sortiesma:{schema:'sma',ex:'Entrée à 100 (SMA 95). Le prix monte à 140 puis redescend à 95 (=SMA) → vente à 95. Le gain n\'est pas verrouillé au sommet : c\'est le prix du suivi de tendance.'},
+ stopcata:{ex:'Entrée 100, stop −18 %. La sortie SMA agit bien avant en temps normal. Mais si un flash-crash intraday envoie le prix à 80 avant la clôture, le stop coupe vers 82 (−18 %) au lieu d\'attendre.'},
+ drawdown:{schema:'dd',ex:'Le portefeuille monte à 220 (pic) puis redescend à 209 → drawdown = (220−209)/220 = 5 %. À 8 %, le kill switch met les entrées en pause.'},
+ exposition:{ex:'Capital 200, dont 80 investis et 120 en cash → exposition 40 %. Cap à 72 % = on n\'investit jamais plus de ~144.'},
+ feargreed:{ex:'Indice à 12 (peur extrême, <20) → nouvelles entrées en pause. À 41 (peur) → normal, on trade.'},
+ killswitch:{ex:'Drawdown atteint 8 % → kill switch : plus aucune nouvelle entrée. Les positions ouvertes gardent leurs sorties de protection.'},
+ winrate:{ex:'8 trades, 6 gagnants → win rate 75 %. Mais un trend-follower peut être à 40 % de win rate ET gagnant, si les gagnants sont bien plus gros que les perdants.'},
+ pnllatent:{ex:'Achat à 58 300, prix actuel 63 000 → P&L latent +8 % (non encaissé, il bouge avec le prix).'},
+ pnlrealise:{ex:'Tu clôtures à +8 % → ce gain passe en P&L réalisé (encaissé, net de frais).'},
+};
+function schemaSVG(type){
+  if(type==='sma') return '<div class="g-schema"><svg viewBox="0 0 280 130" xmlns="http://www.w3.org/2000/svg">'
+    +'<polyline points="10,88 270,52" fill="none" stroke="#5c9dff" stroke-width="2" stroke-dasharray="4 4"/>'
+    +'<polyline points="10,104 45,96 70,80 100,52 150,26 190,42 220,59 250,70 270,74" fill="none" stroke="#eef3fa" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>'
+    +'<circle cx="70" cy="80" r="4.5" fill="#3fd08a"/><circle cx="220" cy="59" r="4.5" fill="#ff6d7d"/>'
+    +'<text x="70" y="70" fill="#3fd08a" font-size="10" text-anchor="middle" font-family="monospace">achat</text>'
+    +'<text x="223" y="49" fill="#ff6d7d" font-size="10" text-anchor="middle" font-family="monospace">vente</text>'
+    +'<text x="266" y="46" fill="#5c9dff" font-size="9" text-anchor="end" font-family="monospace">SMA 50j</text>'
+    +'</svg><div class="cap">Achat quand le prix passe au-dessus de la SMA, vente quand il repasse dessous.</div></div>';
+  if(type==='dd') return '<div class="g-schema"><svg viewBox="0 0 280 130" xmlns="http://www.w3.org/2000/svg">'
+    +'<line x1="110" y1="34" x2="245" y2="34" stroke="#61708a" stroke-width="1" stroke-dasharray="3 3"/>'
+    +'<polyline points="10,95 55,62 110,34 160,72 200,84 245,52 270,44" fill="none" stroke="#eef3fa" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>'
+    +'<line x1="200" y1="35" x2="200" y2="83" stroke="#ff6d7d" stroke-width="1.5"/>'
+    +'<circle cx="110" cy="34" r="4" fill="#3fd08a"/>'
+    +'<text x="110" y="26" fill="#3fd08a" font-size="10" text-anchor="middle" font-family="monospace">pic</text>'
+    +'<text x="206" y="60" fill="#ff6d7d" font-size="10" text-anchor="start" font-family="monospace">drawdown</text>'
+    +'</svg><div class="cap">La baisse depuis le plus haut atteint (le pic).</div></div>';
+  return '';
+}
+function glossBody(key,g){
+  let h='<div class="g-def-txt">'+esc(g.d)+'</div>';
+  const x=GLOSS_EXTRA[key]||{};
+  if(x.schema) h+=schemaSVG(x.schema);
+  if(x.ex) h+='<div class="g-ex"><span class="g-ex-k">Exemple</span>'+esc(x.ex)+'</div>';
+  return h;
+}
+function openGloss(key){const g=GLOSSARY[key];if(!g)return;$('g-term').textContent=g.t;$('g-def').innerHTML=glossBody(key,g);$('glosheet').scrollTop=0;$('gloscrim').classList.add('open');$('glosheet').classList.add('open');}
 function closeGloss(){$('gloscrim').classList.remove('open');$('glosheet').classList.remove('open');}
 function renderGlossaryList(){const el=$('glossary-list');if(!el)return;
   el.innerHTML=GLOSS_ORDER.map(k=>'<div class="lrow" data-gloss="'+k+'"><span class="lt">'+esc(GLOSSARY[k].t)+'</span><span class="lc">ⓘ</span></div>').join('');}
