@@ -238,6 +238,22 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 .intro p{font-size:.9rem;color:var(--ink2);line-height:1.6;margin:0;}
 .intro p+p{margin-top:9px;}
 .intro b{color:var(--ink);}
+
+/* ---- visite guidee ---- */
+.tour-hi{outline:2px solid var(--pos)!important;outline-offset:4px;border-radius:16px;
+  box-shadow:0 0 0 4px rgba(63,208,138,.18);}
+#tourbubble{position:fixed;left:12px;right:12px;bottom:calc(82px + var(--safe-b));z-index:58;
+  max-width:616px;margin:0 auto;background:var(--surf-hi);border:1px solid var(--bd-hi);
+  border-radius:16px;padding:15px 16px;box-shadow:0 14px 44px rgba(0,0,0,.55);
+  transform:translateY(16px);opacity:0;pointer-events:none;transition:.25s;}
+#tourbubble.show{transform:none;opacity:1;pointer-events:auto;}
+#tourbubble .tour-prog{font-family:var(--mono);font-size:.62rem;font-weight:700;color:var(--pos);
+  letter-spacing:.08em;display:block;margin-bottom:6px;}
+#tourbubble .tour-body{font-size:.9rem;color:var(--ink);line-height:1.5;}
+#tourbubble .tour-acts{display:flex;gap:10px;justify-content:flex-end;margin-top:13px;}
+#tourbubble button{font-family:var(--disp);font-weight:600;font-size:.85rem;padding:9px 16px;
+  border-radius:10px;border:1px solid var(--bd);background:var(--surf);color:var(--ink2);cursor:pointer;}
+#tourbubble button.pos{background:var(--pos);color:#04120b;border-color:transparent;}
 .login-card{width:100%;max-width:340px;background:var(--surf);border:1px solid var(--bd);
   border-radius:20px;padding:28px 22px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);}
 .login-card .lg{font-family:var(--disp);font-weight:700;font-size:1.6rem;letter-spacing:-.01em;}
@@ -336,6 +352,7 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
       <p><b>Pas de take-profit par défaut.</b> On laisse courir un gain tant que la tendance tient, on sort quand le prix repasse sous sa moyenne 50j. Un coupe-circuit (kill switch) met tout en pause si ça dérape.</p>
     </div>
     <div class="learn" id="glossary-list"></div>
+    <button class="btn" id="tour-replay" style="margin-top:12px">↺ Revoir la visite guidée</button>
 
     <div class="eyebrow">Paramètres actifs</div>
     <div class="plist" id="params"></div>
@@ -411,6 +428,15 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
   <div class="g-grab"></div>
   <div class="g-term" id="g-term">—</div>
   <div class="g-def" id="g-def"></div>
+</div>
+
+<div id="tourbubble">
+  <span class="tour-prog" id="tour-prog">1 / 8</span>
+  <div class="tour-body" id="tour-txt"></div>
+  <div class="tour-acts">
+    <button id="tour-skip">Passer</button>
+    <button id="tour-next" class="pos">Suivant</button>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -605,7 +631,7 @@ function renderBio(){
 let _started=false;
 function startApp(){
   if(_started)return; _started=true;
-  refresh(); setInterval(refresh,5000); renderNotif(); renderBio();
+  refresh(); setInterval(refresh,5000); renderNotif(); renderBio(); maybeStartTour();
 }
 function boot(){
   // Verrou biometrique local : independant du jeton serveur (marche en mode ouvert).
@@ -720,6 +746,47 @@ function botExplain(b){
   if(dist!=null&&dist<0) return '<b>En attente.</b> Le prix de '+sym+' est '+Math.abs(dist).toFixed(1)+'% <b>sous</b> sa moyenne '+smaN+'j. Ce bot n\'achète que quand le prix repasse au-dessus — il suit la tendance, il ne tente pas d\'attraper le creux.';
   if(dist!=null&&dist>=0) return '<b>Prêt.</b> Le prix de '+sym+' est '+dist.toFixed(1)+'% <b>au-dessus</b> de sa moyenne '+smaN+'j : tendance haussière, il peut ouvrir au prochain cycle (sauf pause, cap d\'exposition ou peur extrême).';
   return 'Bot actif, à l\'écart (flat) pour l\'instant.';
+}
+
+// ==== Niveau B — visite guidee (1er lancement + rejouable) ====
+function showScreen(sc){
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.sc===sc));
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  const el=$('sc-'+sc);if(el)el.classList.add('active');
+}
+const TOUR=[
+ {sc:'home',sel:'#hero',t:'Voici la valeur totale de ton portefeuille — avec le P&L du jour et le total depuis le début.'},
+ {sc:'home',sel:'#equity',t:'La courbe de valeur dans le temps. Change la période : 7j, 30j, ou tout.'},
+ {sc:'home',sel:'.ggrid',t:'Santé & risque en un coup d\'œil. Tape un petit ⓘ pour comprendre chaque indicateur (exemple + schéma à l\'appui).'},
+ {sc:'home',sel:'#bots .bot',t:'Chaque bot suit une crypto. Tape une carte : tu verras son état expliqué en clair, et le détail.'},
+ {sc:'act',sel:'.tiles',t:'Ton track record : trades clôturés, win rate, P&L réalisé — la preuve, pas la promesse.'},
+ {sc:'journal',sel:'#journal',t:'Le Journal : toutes les alertes et rapports au même endroit.'},
+ {sc:'set',sel:'.intro',t:'« Comprendre Kairos » : la stratégie en 3 phrases + le glossaire complet.'},
+ {sc:'set',sel:'#bio-btn-wrap',t:'Et ici tu sécurises l\'appli par empreinte. Voilà, tu sais l\'essentiel — bon trading !'},
+];
+let _tourI=0;
+function startTour(){_tourI=0;tourStep(0);}
+function tourStep(i){
+  if(i>=TOUR.length||i<0){finishTour();return;}
+  _tourI=i;const step=TOUR[i];
+  showScreen(step.sc);
+  document.querySelectorAll('.tour-hi').forEach(e=>e.classList.remove('tour-hi'));
+  const el=document.querySelector(step.sel);
+  if(el){el.classList.add('tour-hi');try{el.scrollIntoView({behavior:'smooth',block:'center'});}catch(_){}}
+  $('tour-txt').textContent=step.t;
+  $('tour-prog').textContent=(i+1)+' / '+TOUR.length;
+  $('tour-next').textContent=(i===TOUR.length-1)?'Terminer':'Suivant';
+  $('tourbubble').classList.add('show');
+}
+function finishTour(){
+  document.querySelectorAll('.tour-hi').forEach(e=>e.classList.remove('tour-hi'));
+  $('tourbubble').classList.remove('show');
+  localStorage.setItem('kairos_tour_done','1');
+  showScreen('home');
+}
+function maybeStartTour(){
+  if(localStorage.getItem('kairos_tour_done'))return;
+  setTimeout(()=>{ if(!localStorage.getItem('kairos_tour_done')) startTour(); },1400);
 }
 
 function render(){
@@ -989,6 +1056,9 @@ $('biolock-pw').onclick=()=>{hideBioLock();showLogin();};
 document.addEventListener('click',e=>{const el=e.target.closest('[data-gloss]');if(el){e.stopPropagation();openGloss(el.dataset.gloss);}});
 $('gloscrim').onclick=closeGloss;
 const _gg=document.querySelector('#glosheet .g-grab');if(_gg)_gg.onclick=closeGloss;
+$('tour-next').onclick=()=>tourStep(_tourI+1);
+$('tour-skip').onclick=finishTour;
+$('tour-replay').onclick=startTour;
 renderGlossaryList();
 boot();
 if('serviceWorker'in navigator&&location.protocol==='https:'){navigator.serviceWorker.register('/app/sw.js',{scope:'/app'}).catch(()=>{});}
