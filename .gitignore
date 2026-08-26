@@ -19,6 +19,13 @@ memory/backups/
 # Config Telegram (chat_id privé)
 memory/telegram_config.json
 
+# Push web : cle VAPID PRIVEE + abonnements + preferences (ne JAMAIS committer)
+memory/vapid.json
+memory/push_subs.json
+memory/push_prefs.json
+memory/preflight_state.json
+memory/notifications.json
+
 # Donnees runtime (prix bruts, P&L, order_id -> leakage prevention)
 memory/trade_journal.csv
 memory/tuning_proposals/

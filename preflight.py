@@ -97,7 +97,13 @@ def check_db() -> CheckResult:
     db_dir  = os.path.dirname(db_path) or "."
 
     if not os.path.isdir(db_dir):
-        return _fatal("db", f"dossier introuvable '{db_dir}' (DB_PATH={db_path})")
+        # config_validator promet une creation auto -> on cree le dossier ici plutot
+        # qu'un FATAL (qui boot-looperait). init_db creera la DB au demarrage.
+        try:
+            os.makedirs(db_dir, exist_ok=True)
+            log.info("preflight_db_dir_created", dir=db_dir)
+        except Exception as exc:
+            return _fatal("db", f"dossier '{db_dir}' absent et non creable : {exc}")
 
     try:
         conn = sqlite3.connect(db_path, timeout=5)

@@ -92,10 +92,11 @@ def test_check_db() -> None:
     r = preflight.check_db()
     check(f"tables manquantes -> warn ({r.level})", r.level == "warn")
 
-    # FATAL : dossier inexistant
+    # dossier inexistant -> cree (aligne avec config_validator), non-fatal
     os.environ["DB_PATH"] = os.path.join(_TMP, "nope", "x.db")
     r = preflight.check_db()
-    check(f"dossier absent -> fatal ({r.level})", r.level == "fatal")
+    check(f"dossier absent -> cree, non-fatal ({r.level})", r.level != "fatal")
+    check("dossier effectivement cree", os.path.isdir(os.path.join(_TMP, "nope")))
 
     # FATAL : base verrouillee (write lock tenu par une autre connexion)
     locked_db = os.path.join(_TMP, "locked.db")

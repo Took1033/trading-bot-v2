@@ -1985,7 +1985,11 @@ async def handle_pnl_curve(request: web.Request) -> web.Response:
     Format : [{t: timestamp_iso, v: total_usdc, p: pnl_pct}, ...]
     Limite : 500 points (downsample si plus).
     """
-    days = int(request.query.get("days", "30"))
+    try:
+        days = int(request.query.get("days", "30"))
+    except (TypeError, ValueError):
+        days = 30
+    days  = max(1, min(days, 3650))   # borne 1j..10ans (evite ValueError/OverflowError -> 500)
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     with _db() as conn:
@@ -2419,6 +2423,10 @@ async def handle_addbot(request: web.Request) -> web.Response:
         weight = float(body.get("weight", 0.1))
     except (TypeError, ValueError):
         weight = 0.1
+    import math
+    if not math.isfinite(weight):   # NaN/Inf -> JSON non standard dans bots.json, jauges cassees
+        weight = 0.1
+    weight = max(0.0, min(weight, 1.0))
     if not bot_id or not symbol:
         return web.json_response({"ok": False, "error": "bot_id et symbol requis"}, status=400)
     res = await swarm.add_bot(bot_id, symbol, weight=weight, name=bot_id.upper())
@@ -2730,10 +2738,15 @@ def build_app() -> web.Application:
 
 async def run_dashboard() -> None:
     import asyncio
+    import app_auth
     app    = build_app()
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    # Adresse de bind configurable. Defaut 0.0.0.0 (retro-compatible : acces direct
+    # par IP tailnet + Tailscale Serve). Recommande : 127.0.0.1 (Tailscale Serve
+    # proxifie vers le loopback) pour ne rien exposer en direct.
+    bind = os.getenv("DASHBOARD_BIND", "0.0.0.0")
+    site = web.TCPSite(runner, bind, PORT)
     try:
         await site.start()
     except OSError as exc:
@@ -2745,7 +2758,20 @@ async def run_dashboard() -> None:
             await runner.cleanup()
             return
         raise
-    log.info("dashboard_started", url=f"http://localhost:{PORT}")
+    log.info("dashboard_started", url=f"http://localhost:{PORT}", bind=bind)
+    # Live + appli exposee (0.0.0.0) SANS mot de passe = endpoints d'ordres reels
+    # ouverts a tout le tailnet : alerte forte (en plus du warning de build_app et de
+    # la banniere dans l'appli). Non bloquant (eviter un lockout au deploiement).
+    if MODE == "live" and not app_auth.is_enabled() and bind == "0.0.0.0":
+        try:
+            from interfaces import notifier
+            await notifier.notify(
+                "🔓 *Kairos — appli NON protégée en LIVE*\n"
+                "Les endpoints qui passent de vrais ordres sont joignables sans mot de passe "
+                "sur le tailnet. Définis `APP_PASSWORD` dans `.env` (ou `DASHBOARD_BIND=127.0.0.1`)."
+            )
+        except Exception as exc:
+            log.warning("dashboard_auth_alert_failed", error=str(exc))
     try:
         await asyncio.Event().wait()
     finally:
