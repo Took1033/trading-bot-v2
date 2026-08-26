@@ -56,6 +56,30 @@ DASHBOARD_ENABLED = os.getenv("DASHBOARD_ENABLED", "true").lower() in ("true", "
 DASHBOARD_PORT    = int(os.getenv("DASHBOARD_PORT", "8080"))
 
 
+def _acquire_instance_lock():
+    """Verrou d'instance unique (Windows msvcrt) : empeche deux process bot de tourner
+    en parallele (= ordres reels DUPLIQUES). Retourne le handle de fichier (a garder
+    ouvert tout le process pour tenir le verrou), None si un autre process le detient
+    deja, ou True si aucun verrou n'est disponible (non-Windows) -> on n'empeche rien."""
+    lock_path = os.path.join(
+        os.path.dirname(os.getenv("DB_PATH", "memory/trading.db")) or ".", "kairos.lock")
+    try:
+        os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+    except Exception:
+        pass
+    try:
+        import msvcrt
+    except ImportError:
+        return True
+    fh = open(lock_path, "a+")
+    try:
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        return fh
+    except OSError:
+        fh.close()
+        return None
+
+
 def _build_tasks(swarm, director) -> list:
     """Construit la liste des coroutines a lancer en parallele."""
     from agents.daily_summary     import daily_summary_loop
@@ -88,6 +112,25 @@ async def main() -> None:
     from agents.bot_swarm      import BotSwarm
     from agents.director_agent import DirectorAgent
     from interfaces.notifier   import notify
+
+    # ── Verrou d'instance unique ─────────────────────────────────────────────
+    # Deux process bot en live = ordres reels dupliques. On tolere un bref
+    # chevauchement au redemarrage (l'ancien libere le verrou en mourant).
+    _lock = None
+    for attempt in range(6):
+        _lock = _acquire_instance_lock()
+        if _lock is not None:
+            break
+        await asyncio.sleep(1)
+    if _lock is None:
+        log.error("instance_already_running")
+        print("\n  ❌  Une autre instance de Kairos tourne déjà (verrou). Abandon.\n")
+        try:
+            await notify("⚠️ *Kairos* — 2e instance bloquée (verrou d'instance unique).")
+        except Exception:
+            pass
+        return
+    sys.modules["__main__"]._KAIROS_LOCK = _lock   # garde le handle en vie (verrou tenu)
 
     # ── Preflight ACTIF (Axe 2 fiabilite) ────────────────────────────────────
     # Au-dela du controle statique de config_validator : teste que la DB s'ouvre

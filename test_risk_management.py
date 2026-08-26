@@ -144,11 +144,33 @@ def test_exposure_cap() -> None:
         tb.RISK_MAX_COMBINED_EXPOSURE_PCT = orig_cap
 
 
+def test_antiglitch_persistent_crash() -> None:
+    print("\n[20] anti-glitch : krach persistant declenche le kill switch")
+    trading_state.release_kill_switch()
+    trading_state.clear_entry_grace()
+    d = DirectorAgent(_Swarm(80.0))          # value = 80 (< 50% du peak 200)
+    d._initial_value = 200.0
+    d._peak_value    = 200.0
+    async def _fg(): return 50
+    d._fetch_fear_greed = _fg                # type: ignore
+
+    # 1er tick implausible -> ignore (probable glitch), kill switch NON declenche
+    asyncio.run(d._check())
+    check("1 tick implausible -> ignore", trading_state.is_kill_switch_active() is False)
+    check("compteur implausible = 1", d._implausible_count == 1)
+
+    # 2e tick implausible consecutif -> vrai krach -> kill switch (via drawdown 60%)
+    asyncio.run(d._check())
+    check("2 ticks implausibles -> kill switch declenche", trading_state.is_kill_switch_active() is True)
+    trading_state.release_kill_switch()
+
+
 if __name__ == "__main__":
     print("=== Risk-management — regression tests ===")
     test_hourly_window()
     test_daily_hold_and_resume()
     test_exposure_cap()
+    test_antiglitch_persistent_crash()
     print(f"\n{'=' * 46}")
     if _failures:
         print(f"  {len(_failures)} test(s) EN ECHEC :")

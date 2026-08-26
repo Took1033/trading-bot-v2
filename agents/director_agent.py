@@ -57,6 +57,7 @@ class DirectorAgent:
         self._kill_is_fg     : bool  = False         # pause causee par Fear & Greed ?
         self._daily_hold_until: float = 0.0          # arret journalier : maintenu jusqu'a ce timestamp
         self._dd_warned      : bool  = False         # alerte drawdown soft deja envoyee ?
+        self._implausible_count: int = 0             # ticks 'implausibles' consecutifs (anti-glitch)
 
         # Snapshots pour la perte horaire. IMPORTANT : la fenetre doit couvrir PLUS
         # d'1h, sinon _compute_hourly_loss (qui cherche un echantillon >= 3600s) ne
@@ -174,11 +175,24 @@ class DirectorAgent:
         # vrai drawdown — un portefeuille reel ne s'evapore pas en 30s, et le kill
         # switch se serait deja declenche a 8%. On ignore ce tick (ni peak, ni kill
         # switch, ni fenetre horaire) pour ne jamais declencher de faux kill switch.
-        if value <= 0 or (self._peak_value and value < self._peak_value * 0.5):
-            log.warning("snapshot_value_implausible_skipped",
-                        value=round(value, 2),
-                        peak=round(self._peak_value or 0, 2))
-            return
+        implausible = value <= 0 or (self._peak_value and value < self._peak_value * 0.5)
+        if implausible:
+            self._implausible_count += 1
+            # 1er tick implausible = probable glitch de lecture (get_accounts incomplet)
+            # -> on ignore. Mais si ca PERSISTE (>=2 ticks) avec value>0, c'est un VRAI
+            # krach (>50%) : on ne reste pas aveugle -> on laisse passer pour que le kill
+            # switch agisse. Un value<=0 reste toujours ignore (impossible a traiter).
+            if value <= 0 or self._implausible_count < 2:
+                log.warning("snapshot_value_implausible_skipped",
+                            value=round(value, 2), count=self._implausible_count,
+                            peak=round(self._peak_value or 0, 2))
+                return
+            log.error("snapshot_value_implausible_persistent",
+                      value=round(value, 2), count=self._implausible_count,
+                      peak=round(self._peak_value or 0, 2))
+            # fall-through : traite comme un vrai krach (drawdown -> kill switch)
+        else:
+            self._implausible_count = 0
 
         # Reprise (manuelle via /release, ou auto) d'un kill switch alors qu'un arret
         # journalier courait : on leve le bookkeeping pour NE PAS rester aveugle 24h
