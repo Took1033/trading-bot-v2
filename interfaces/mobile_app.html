@@ -397,7 +397,7 @@ function renderHealth(){
   if(pf&&pf.ok===false){kind='neg';msg='⚠️ Dernier démarrage : échec des contrôles — voir Réglages ▸ Santé système.';}
   else if(h.kill_switch_active){kind='neg';msg='⏸ Entrées bloquées — '+(h.kill_reason||'kill switch actif');}
   else if((h.entry_grace_s||0)>0){kind='warn';msg='⏳ Démarrage — vérification du marché ('+Math.round(h.entry_grace_s)+' s), entrées en attente.';}
-  else if(h.auth_enabled===false){kind='warn';msg='🔓 Appli non protégée — définis APP_PASSWORD dans .env pour exiger un mot de passe.';}
+  else if(h.auth_enabled===false && !bioEnabled()){kind='warn';msg='🔓 Appli non protégée — active l\'empreinte (Réglages ▸ Sécurité) ou définis APP_PASSWORD.';}
   if(msg){bn.className='banner '+kind;bn.textContent=msg;bn.style.display='block';}else{bn.style.display='none';}
   // bloc Reglages
   const el=$('health');if(!el)return;
@@ -414,7 +414,13 @@ function renderHealth(){
     row('Auth Coinbase',checks.coinbase?g(checks.coinbase.level):'<span class="pv">—</span>')+
     row('Dernier signal','<span class="pv">'+(ONLINE?relTime(h.last_decision_ts):'hors ligne')+'</span>')+
     row('Entrées',entries)+
-    row('Protection appli',h.auth_enabled?'<span class="pv on">activée</span>':'<span class="pv" style="color:var(--warn)">non protégée</span>');
+    row('Protection appli',(function(){
+      const bio=bioEnabled();
+      if(h.auth_enabled&&bio)return '<span class="pv on">mot de passe + empreinte</span>';
+      if(h.auth_enabled)     return '<span class="pv on">mot de passe</span>';
+      if(bio)                return '<span class="pv on">empreinte (ce tél.)</span>';
+      return '<span class="pv" style="color:var(--warn)">non protégée</span>';
+    })());
   const lw=$('logout-wrap');
   if(lw){lw.innerHTML=(h.auth_enabled&&TOKEN)?'<button class="btn" id="logout-b">Se déconnecter</button>':'';
     const lb=$('logout-b');if(lb)lb.onclick=logout;}
