@@ -55,11 +55,14 @@ class DirectorAgent:
         self._peak_value     : float | None = None
         self._kill_switch_at : float = 0.0           # timestamp d'activation
         self._kill_is_fg     : bool  = False         # pause causee par Fear & Greed ?
-        self._daily_stop_at  : float = 0.0           # timestamp arret journalier
+        self._daily_hold_until: float = 0.0          # arret journalier : maintenu jusqu'a ce timestamp
         self._dd_warned      : bool  = False         # alerte drawdown soft deja envoyee ?
 
-        # Snapshots horaires pour calcul de perte horaire (60 min)
-        self._hourly_window: deque[tuple[float, float]] = deque(maxlen=120)
+        # Snapshots pour la perte horaire. IMPORTANT : la fenetre doit couvrir PLUS
+        # d'1h, sinon _compute_hourly_loss (qui cherche un echantillon >= 3600s) ne
+        # trouve jamais de reference -> le kill switch horaire est de fait desactive.
+        # maxlen=240 (~2h a 1 sample/30s) garantit toujours une reference > 1h.
+        self._hourly_window: deque[tuple[float, float]] = deque(maxlen=240)
 
         # Fear & Greed Index
         self._fg_value    : int | None = None
@@ -177,6 +180,17 @@ class DirectorAgent:
                         peak=round(self._peak_value or 0, 2))
             return
 
+        # Reprise (manuelle via /release, ou auto) d'un kill switch alors qu'un arret
+        # journalier courait : on leve le bookkeeping pour NE PAS rester aveugle 24h
+        # (drawdown/horaire/F&G) pendant que les entrees reprennent. Ne s'active
+        # qu'apres une reprise reelle (kill switch OFF + bookkeeping residuel).
+        if not trading_state.is_kill_switch_active() and (self._daily_hold_until or self._kill_switch_at):
+            self._daily_hold_until = 0.0
+            self._kill_switch_at   = 0.0
+            self._kill_is_fg       = False
+            self._peak_value       = value   # repart du niveau courant (anti re-trigger)
+            log.info("director_monitoring_resumed", value=round(value, 2))
+
         # Init au premier check
         if self._initial_value is None:
             self._initial_value = value
@@ -195,10 +209,6 @@ class DirectorAgent:
         # ── Si kill switch actif : check de reprise ──────────────────────────
         if trading_state.is_kill_switch_active():
             await self._maybe_release_kill_switch(now)
-            return
-
-        # ── Si arret journalier actif : ne rien faire ────────────────────────
-        if self._daily_stop_at > 0 and (now - self._daily_stop_at) < 86400:
             return
 
         # ── 0. Fear & Greed Index ────────────────────────────────────────────
@@ -253,12 +263,17 @@ class DirectorAgent:
         if self._initial_value > 0:
             daily_loss = (self._initial_value - value) / self._initial_value
             if daily_loss >= MAX_DAILY_LOSS_PCT:
-                self._daily_stop_at = now
+                # Arret journalier = kill switch tenu 24h (via _daily_hold_until, gere
+                # par _maybe_release_kill_switch comme le hold F&G). _kill_switch_at
+                # arme -> la reprise (auto ou /release) est correctement geree.
+                self._daily_hold_until = now + 86400
+                self._kill_switch_at   = now
+                self._kill_is_fg       = False
                 trading_state.kill_switch(f"Perte journaliere {daily_loss:.2%} - arret 24h")
                 await notifier.notify(
                     f"🚨 *KILL SWITCH JOURNALIER*\n"
                     f"Perte 24h : `{daily_loss:.2%}` (limite `{MAX_DAILY_LOSS_PCT:.0%}`)\n"
-                    f"Arret de tous les bots pour `24h`."
+                    f"Arret de tous les bots pour `24h` (reprise auto, ou /release)."
                 )
                 log.error("daily_kill_switch", loss=round(daily_loss, 4))
                 return
@@ -311,6 +326,14 @@ class DirectorAgent:
         if elapsed_min < RESUME_AFTER_MIN:
             return
 
+        # Arret journalier : tenir jusqu'a la fin des 24h (comme le hold F&G).
+        # Un /release manuel est gere en amont dans _check (leve _daily_hold_until).
+        if self._daily_hold_until and now < self._daily_hold_until:
+            self._kill_switch_at = now
+            log.info("kill_switch_daily_hold",
+                     remaining_h=round((self._daily_hold_until - now) / 3600, 1))
+            return
+
         # Pause causee par le Fear & Greed : ne lever que si le marche est sorti
         # de l'Extreme Fear. Sinon prolonger silencieusement (evite le thrash
         # KILL/release horaire + le spam Telegram en regime de peur prolonge).
@@ -323,8 +346,9 @@ class DirectorAgent:
                 return
 
         trading_state.release_kill_switch()
-        self._kill_switch_at = 0
-        self._kill_is_fg     = False
+        self._kill_switch_at   = 0
+        self._kill_is_fg       = False
+        self._daily_hold_until = 0.0
         # Reset du peak pour eviter de re-trigger immediatement
         self._peak_value = await self.swarm.get_portfolio_total()
 

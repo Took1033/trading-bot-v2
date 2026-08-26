@@ -56,6 +56,12 @@ TAKER_FEE_PCT        = float(os.getenv("COINBASE_TAKER_FEE_PCT", "0.0075"))
 # bear global — la ou AVAX/DOT/LTC saignent au backtest. A VALIDER avant d'activer.
 REGIME_FILTER_ENABLED = os.getenv("REGIME_FILTER_ENABLED", "false").lower() in ("true", "1", "yes")
 REGIME_SYMBOL         = os.getenv("REGIME_FILTER_SYMBOL", "BTC-USDC")
+# Cap d'exposition combinee du swarm (fraction du portefeuille deployee, tous bots
+# confondus). Applique a CHAQUE entree (defaut 1.0 = pas de plafond si non defini).
+# Sans ca, N bots correles peuvent tous entrer sur la meme vague -> exposition non
+# bornee (limitee seulement par le cash). Reduit ou refuse l'entree si le cap serait
+# depasse. Ne peut que reduire l'exposition (jamais l'augmenter) : sans risque.
+RISK_MAX_COMBINED_EXPOSURE_PCT = float(os.getenv("RISK_MAX_COMBINED_EXPOSURE_PCT", "1.0") or "1.0")
 
 
 class TrendBot:
@@ -253,6 +259,19 @@ class TrendBot:
         total_usdc   = snap.get("total_usdc", 0.0)
         free_usdc    = snap.get("usdc_balance", 0.0)
         spend        = min(total_usdc * TREND_POSITION_PCT, free_usdc * 0.95)
+
+        # Cap d'exposition combinee : deploye = total - cash (positions de TOUS les
+        # bots + dust). On ne laisse pas l'exposition depasser le cap -> on rogne la
+        # mise sur la marge restante (room). room <= 0 -> mise nulle -> skip propre.
+        if RISK_MAX_COMBINED_EXPOSURE_PCT < 1.0 and total_usdc > 0:
+            deployed = max(0.0, total_usdc - free_usdc)
+            room     = RISK_MAX_COMBINED_EXPOSURE_PCT * total_usdc - deployed
+            if room < spend:
+                spend = max(0.0, room)
+                if spend < TREND_MIN_USDC:
+                    log.info("trend_bot_entry_blocked_exposure_cap", bot_id=self.bot_id,
+                             deployed_pct=round(deployed / total_usdc, 3),
+                             cap=RISK_MAX_COMBINED_EXPOSURE_PCT)
 
         if spend < TREND_MIN_USDC:
             log.info("trend_bot_entry_skipped", bot_id=self.bot_id,
