@@ -157,6 +157,10 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 #sheet h2{font-family:var(--disp);font-weight:700;font-size:1.3rem;}
 #sheet .ssym{font-family:var(--mono);font-size:.75rem;color:var(--mut);margin-top:2px;}
 #sheet .bignpnl{font-family:var(--disp);font-weight:700;font-size:2.4rem;margin:16px 0;}
+#sheet #sh-explain{background:var(--surf2);border:1px solid var(--bd);border-radius:12px;
+  padding:13px 15px;font-size:.9rem;color:var(--ink2);line-height:1.55;margin-bottom:14px;}
+#sheet #sh-explain b{color:var(--ink);font-weight:600;}
+#sheet #sh-explain:empty{display:none;}
 #sheet .drow{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--bd);font-size:.9rem;}
 #sheet .drow .dl{color:var(--ink2);} #sheet .drow .dv{font-family:var(--mono);font-weight:700;}
 #sheet .acts{display:flex;gap:10px;margin-top:20px;}
@@ -199,6 +203,35 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 #login.show,#biolock.show{display:flex;}
 #biolock .fp{font-size:2.6rem;margin-bottom:8px;line-height:1;}
 #biolock .alt{margin-top:10px;background:transparent;border-color:var(--bd);color:var(--ink2);}
+
+/* ---- pedagogie : info tappable + feuille glossaire ---- */
+.info{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
+  border-radius:50%;border:1px solid var(--bd-hi);color:var(--ink2);font-size:.58rem;font-weight:700;
+  font-family:var(--mono);margin-left:5px;cursor:pointer;vertical-align:middle;flex-shrink:0;line-height:1;}
+.info:active{transform:scale(.88);}
+#gloscrim{position:fixed;inset:0;z-index:44;background:rgba(4,7,12,.6);opacity:0;pointer-events:none;transition:opacity .25s;}
+#gloscrim.open{opacity:1;pointer-events:auto;}
+#glosheet{position:fixed;left:0;right:0;bottom:0;z-index:45;background:var(--surf);
+  border:1px solid var(--bd);border-radius:22px 22px 0 0;padding:8px 20px calc(28px + var(--safe-b));
+  transform:translateY(102%);transition:transform .28s cubic-bezier(.22,1,.36,1);
+  max-width:640px;margin:0 auto;max-height:82vh;overflow-y:auto;}
+#glosheet.open{transform:none;}
+#glosheet .g-grab{width:46px;height:5px;border-radius:3px;background:var(--bd-hi);margin:10px auto 16px;}
+#glosheet .g-term{font-family:var(--disp);font-weight:700;font-size:1.25rem;letter-spacing:-.01em;}
+#glosheet .g-def{color:var(--ink2);font-size:.95rem;line-height:1.62;margin-top:10px;white-space:pre-wrap;}
+/* ---- section Comprendre ---- */
+.learn{background:var(--surf);border:1px solid var(--bd);border-radius:15px;overflow:hidden;}
+.learn .lrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px;
+  border-bottom:1px solid var(--bd);cursor:pointer;}
+.learn .lrow:last-child{border-bottom:none;}
+.learn .lrow:active{background:var(--surf-hi);}
+.learn .lt{font-family:var(--disp);font-weight:600;font-size:.95rem;}
+.learn .lc{color:var(--mut);font-size:1.1rem;}
+.intro{background:linear-gradient(160deg,var(--surf-hi),var(--surf2));border:1px solid var(--bd);
+  border-radius:15px;padding:16px 17px;margin-bottom:12px;}
+.intro p{font-size:.9rem;color:var(--ink2);line-height:1.6;margin:0;}
+.intro p+p{margin-top:9px;}
+.intro b{color:var(--ink);}
 .login-card{width:100%;max-width:340px;background:var(--surf);border:1px solid var(--bd);
   border-radius:20px;padding:28px 22px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);}
 .login-card .lg{font-family:var(--disp);font-weight:700;font-size:1.6rem;letter-spacing:-.01em;}
@@ -236,8 +269,8 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
       <span class="delta" id="pf-delta">—</span><span class="day mono" id="pf-day"></span>
       <div class="wl" id="pf-wl"></div>
       <div class="foot">
-        <span>réalisé <b id="pf-real">—</b></span>
-        <span>latent <b id="pf-lat">—</b></span>
+        <span>réalisé<span class="info" data-gloss="pnlrealise">i</span> <b id="pf-real">—</b></span>
+        <span>latent<span class="info" data-gloss="pnllatent">i</span> <b id="pf-lat">—</b></span>
         <span>initial <b id="pf-init">—</b></span>
       </div>
     </div>
@@ -257,10 +290,10 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 
     <div class="eyebrow">Santé &amp; risque</div>
     <div class="ggrid">
-      <div class="g"><div class="gl">Drawdown</div><div class="gv" id="g-dd">—</div><div class="track"><i class="fill" id="g-dd-f" style="background:var(--pos)"></i></div><div class="sub">seuil 6%</div></div>
-      <div class="g"><div class="gl">Exposition</div><div class="gv" id="g-exp">—</div><div class="track"><i class="fill" id="g-exp-f" style="background:var(--acc)"></i></div><div class="sub" id="g-exp-s">cap —</div></div>
-      <div class="g fg"><div class="gl">Fear &amp; Greed</div><div class="gv" id="g-fg">—</div><div class="track"><span class="mk" id="g-fg-m" style="left:50%"></span></div><div class="sub" id="g-fg-s">—</div></div>
-      <div class="g"><div class="gl">Régime marché</div><div class="gv" id="g-reg">—</div><div class="track"><i class="fill" id="g-reg-f" style="width:100%"></i></div><div class="sub" id="g-reg-s">via BTC</div></div>
+      <div class="g"><div class="gl">Drawdown<span class="info" data-gloss="drawdown">i</span></div><div class="gv" id="g-dd">—</div><div class="track"><i class="fill" id="g-dd-f" style="background:var(--pos)"></i></div><div class="sub">seuil 6%</div></div>
+      <div class="g"><div class="gl">Exposition<span class="info" data-gloss="exposition">i</span></div><div class="gv" id="g-exp">—</div><div class="track"><i class="fill" id="g-exp-f" style="background:var(--acc)"></i></div><div class="sub" id="g-exp-s">cap —</div></div>
+      <div class="g fg"><div class="gl">Fear &amp; Greed<span class="info" data-gloss="feargreed">i</span></div><div class="gv" id="g-fg">—</div><div class="track"><span class="mk" id="g-fg-m" style="left:50%"></span></div><div class="sub" id="g-fg-s">—</div></div>
+      <div class="g"><div class="gl">Régime marché<span class="info" data-gloss="regime">i</span></div><div class="gv" id="g-reg">—</div><div class="track"><i class="fill" id="g-reg-f" style="width:100%"></i></div><div class="sub" id="g-reg-s">via BTC</div></div>
     </div>
 
     <div class="eyebrow" id="bots-eyebrow">Mes bots</div>
@@ -271,8 +304,8 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
   <section class="screen" id="sc-act">
     <div class="eyebrow">Performance</div>
     <div class="tiles">
-      <div class="tile"><div class="k">Trades clôturés</div><div class="v mono" id="t-closed">—</div></div>
-      <div class="tile"><div class="k">Win rate</div><div class="v mono" id="t-wr">—</div></div>
+      <div class="tile"><div class="k">Trades clôturés<span class="info" data-gloss="trades">i</span></div><div class="v mono" id="t-closed">—</div></div>
+      <div class="tile"><div class="k">Win rate<span class="info" data-gloss="winrate">i</span></div><div class="v mono" id="t-wr">—</div></div>
       <div class="tile wide"><div class="k">Meilleur symbole</div><div class="v mono" id="t-best">—</div></div>
     </div>
     <div class="eyebrow">Track record par bot</div>
@@ -290,6 +323,14 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 
   <!-- REGLAGES -->
   <section class="screen" id="sc-set">
+    <div class="eyebrow">Comprendre Kairos</div>
+    <div class="intro">
+      <p><b>Suivi de tendance.</b> Kairos achète quand le prix passe au-dessus de sa moyenne des 50 derniers jours, et garde la position tant qu'il reste au-dessus. Il ne devine ni les creux ni les sommets : il suit la vague.</p>
+      <p><b>Il attend souvent.</b> ~60–70 % du temps les bots sont à l'écart (pas de tendance claire). C'est voulu — l'impatience est l'ennemie du trend-following.</p>
+      <p><b>Pas de take-profit par défaut.</b> On laisse courir un gain tant que la tendance tient, on sort quand le prix repasse sous sa moyenne 50j. Un coupe-circuit (kill switch) met tout en pause si ça dérape.</p>
+    </div>
+    <div class="learn" id="glossary-list"></div>
+
     <div class="eyebrow">Paramètres actifs</div>
     <div class="plist" id="params"></div>
     <div class="eyebrow">Kill switch</div>
@@ -320,6 +361,7 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
   <button class="sh-close" id="sh-close" aria-label="Fermer">✕</button>
   <h2 id="sh-name">—</h2><div class="ssym" id="sh-sym">—</div>
   <div class="bignpnl" id="sh-pnl">—</div>
+  <div id="sh-explain"></div>
   <div id="sh-rows"></div>
   <div id="sh-chart-wrap" style="display:none">
     <div class="cl">Prix récent vs seuils</div>
@@ -356,6 +398,13 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
     <div class="login-err" id="biolock-err"></div>
     <button class="btn alt" id="biolock-pw">Utiliser le mot de passe</button>
   </div>
+</div>
+
+<div id="gloscrim"></div>
+<div id="glosheet">
+  <div class="g-grab"></div>
+  <div class="g-term" id="g-term">—</div>
+  <div class="g-def" id="g-def"></div>
 </div>
 
 <div id="toast"></div>
@@ -579,6 +628,49 @@ function botPhrase(b){
   return '▶ actif · flat';
 }
 
+// ==== PEDAGOGIE : un glossaire = source de verite, decline en 3 surfaces ====
+const GLOSSARY={
+ trend:{t:'Suivi de tendance',d:'La stratégie de Kairos. On achète quand le prix passe au-dessus de sa moyenne 50 jours, et on garde tant qu\'il reste au-dessus. On ne devine ni les creux ni les sommets — on suit la vague. ~60–70 % du temps, on attend.'},
+ sma50:{t:'Moyenne 50 jours (SMA 50)',d:'La moyenne du prix de clôture sur 50 jours. C\'est la ligne de tendance de Kairos : au-dessus = tendance haussière (on peut être en position), en-dessous = on sort ou on reste à l\'écart.'},
+ signal:{t:'Signal',d:'Ce que dit la stratégie maintenant : 🟢 achat (prix > SMA50), 🔴 vente (prix < SMA50), ⚪ neutre. Le bot n\'agit que s\'il n\'est pas déjà dans l\'état correspondant.'},
+ distsma:{t:'Prix vs SMA',d:'De combien le prix est au-dessus (+) ou en-dessous (−) de sa moyenne 50 jours. Positif = tendance haussière en cours.'},
+ margesortie:{t:'Marge avant sortie',d:'De combien le prix peut encore baisser avant de croiser la moyenne 50j (le signal de sortie). Petite marge = la sortie est proche.'},
+ sortiesma:{t:'Sortie SMA',d:'La sortie par défaut : on vend quand le prix repasse sous la moyenne 50j (retournement de tendance). Pas de take-profit — on laisse courir tant que la tendance tient.'},
+ trailing:{t:'Trailing (stop suiveur)',d:'Sortie optionnelle : on vend si le prix recule de X % depuis son plus haut atteint depuis l\'entrée. Verrouille une partie du gain, mais peut sortir trop tôt d\'un gros mouvement.'},
+ takeprofit:{t:'Take-profit',d:'Sortie optionnelle : on vend dès que le gain atteint X %. Sécurise le gain mais coupe la tendance (on rate la suite si ça continue de monter).'},
+ drawdown:{t:'Drawdown',d:'La baisse depuis le plus haut atteint (le pic). 5 % de drawdown = le portefeuille est 5 % sous son sommet. Au-delà d\'un seuil, le kill switch met les entrées en pause.'},
+ exposition:{t:'Exposition',d:'La part du capital réellement investie (le reste est en cash/USDC). 40 % exposé = 60 % en cash. Un plafond (cap) limite l\'exposition combinée de tous les bots.'},
+ feargreed:{t:'Fear & Greed',d:'Indice de marché de 0 (peur extrême) à 100 (avidité extrême). Sous 20, Kairos met les nouvelles entrées en pause — c\'est une heuristique de prudence, pas une science exacte.'},
+ regime:{t:'Régime marché',d:'Le climat général, jugé via BTC : haussier si BTC est au-dessus de sa moyenne. Sert de filtre optionnel pour n\'ouvrir les alts que quand le marché porte.'},
+ killswitch:{t:'Kill switch',d:'Coupe-circuit global. Met toutes les nouvelles ENTRÉES en pause (drawdown trop fort, peur extrême, grosse perte). Les sorties de protection continuent de fonctionner.'},
+ position:{t:'Position',d:'Ce que le bot détient : une quantité de crypto + un prix d\'entrée moyen. Sa valeur bouge avec le prix ; le P&L se calcule par rapport à l\'entrée.'},
+ pnllatent:{t:'P&L latent',d:'Le gain/perte des positions OUVERTES si tu les vendais maintenant (net de frais). Non réalisé : il bouge avec le prix, pas encore encaissé.'},
+ pnlrealise:{t:'P&L réalisé',d:'Le gain/perte des trades DÉJÀ clôturés (encaissé). C\'est le vrai résultat cumulé, net de frais.'},
+ trades:{t:'Trades clôturés',d:'Nombre d\'allers-retours (achat puis vente) terminés sur la période live. Base du win rate et du P&L réalisé.'},
+ winrate:{t:'Win rate',d:'Le % de trades clôturés gagnants. À nuancer : un suivi de tendance peut avoir un win rate moyen mais gagner gros sur quelques trades et perdre peu sur les autres.'},
+ preflight:{t:'Contrôles de démarrage',d:'Au lancement, Kairos vérifie que la base de données et Coinbase répondent, et bloque les entrées quelques secondes le temps de confirmer que le marché n\'est pas en panique.'},
+};
+const GLOSS_ORDER=['trend','sma50','signal','distsma','margesortie','sortiesma','trailing','takeprofit','drawdown','exposition','feargreed','regime','killswitch','position','pnllatent','pnlrealise','trades','winrate','preflight'];
+function info(k){return '<span class="info" data-gloss="'+k+'">i</span>';}
+function openGloss(key){const g=GLOSSARY[key];if(!g)return;$('g-term').textContent=g.t;$('g-def').textContent=g.d;$('gloscrim').classList.add('open');$('glosheet').classList.add('open');}
+function closeGloss(){$('gloscrim').classList.remove('open');$('glosheet').classList.remove('open');}
+function renderGlossaryList(){const el=$('glossary-list');if(!el)return;
+  el.innerHTML=GLOSS_ORDER.map(k=>'<div class="lrow" data-gloss="'+k+'"><span class="lt">'+esc(GLOSSARY[k].t)+'</span><span class="lc">ⓘ</span></div>').join('');}
+// Axe 2 — explication EN SITUATION d'un bot (dynamique).
+function botExplain(b){
+  const p=b.position||{},hasPos=p.qty>0,dist=(typeof b.dist_pct==='number')?b.dist_pct:null;
+  const smaN=(CFG&&CFG.sma_period)||50, sym=(b.symbol||'').split('-')[0];
+  if(b.paused) return 'Ce bot est <b>en pause</b> : il n\'ouvrira pas de nouvelle position (les sorties de protection restent actives).';
+  if(hasPos){
+    const pl=botPnl(b); let s='<b>En position</b> sur '+sym+(pl!=null?' ('+(pl>=0?'+':'')+pl.toFixed(1)+'%)':'')+'. Il tient tant que le prix reste au-dessus de sa moyenne '+smaN+'j';
+    if(dist!=null){const m=dist+((CFG&&CFG.exit_buffer)||0);if(m>0)s+=' — il vendrait si le prix baissait d\'environ '+m.toFixed(1)+'%';}
+    return s+'. Pas de take-profit : on laisse courir la tendance.';
+  }
+  if(dist!=null&&dist<0) return '<b>En attente.</b> Le prix de '+sym+' est '+Math.abs(dist).toFixed(1)+'% <b>sous</b> sa moyenne '+smaN+'j. Ce bot n\'achète que quand le prix repasse au-dessus — il suit la tendance, il ne tente pas d\'attraper le creux.';
+  if(dist!=null&&dist>=0) return '<b>Prêt.</b> Le prix de '+sym+' est '+dist.toFixed(1)+'% <b>au-dessus</b> de sa moyenne '+smaN+'j : tendance haussière, il peut ouvrir au prochain cycle (sauf pause, cap d\'exposition ou peur extrême).';
+  return 'Bot actif, à l\'écart (flat) pour l\'instant.';
+}
+
 function render(){
   const pf=window._PF||{},sw=SW||[],dir=DIR||{},cfg=CFG||{};
   const val=pf.total||0,init=pf.initial||0,dp=pf.pnl_pct||0;
@@ -659,16 +751,17 @@ function openSheet(i){
   const margin=dist!=null?dist+exitBuf:null;
   const mcol=margin==null?'':(margin>8?'var(--pos)':margin>3?'var(--warn)':'var(--neg)');
   const drow=(l,v)=>'<div class="drow"><span class="dl">'+l+'</span><span class="dv">'+v+'</span></div>';
+  $('sh-explain').innerHTML=botExplain(b);
   $('sh-rows').innerHTML=
     drow('Statut',b.paused?'⏸ en pause':(hasPos?'position ouverte':'▶ actif (flat)'))+
-    (hasPos?drow('Position',(p.qty||0).toPrecision(4)+' '+(b.symbol||'').split('-')[0]):'')+
+    (hasPos?drow('Position'+info('position'),(p.qty||0).toPrecision(4)+' '+(b.symbol||'').split('-')[0]):'')+
     (hasPos?drow('Valeur',fmt(p.qty*b.current_price)):'')+
     drow('Prix actuel',b.current_price?fmt(b.current_price):'—')+
     (hasPos?drow('Prix d\'entrée',fmt(p.avg_price)):'')+
-    drow('Signal',sig==='buy'?'🟢 achat (>SMA)':sig==='sell'?'🔴 vente (<SMA)':'⚪ neutre')+
-    (dist!=null?drow('Prix vs SMA'+smaN,(dist>=0?'+':'')+dist.toFixed(1)+'%'):'')+
-    (hasPos&&margin!=null?drow('Marge avant sortie SMA','<span style="color:'+mcol+'">'+margin.toFixed(1)+'%</span>'):'')+
-    drow('Sortie auto',(b.autoclose&&b.autoclose.active)?((b.autoclose.mode==='trailing'?'trailing ':'take-profit ')+b.autoclose.threshold_pct+'%'):'sortie SMA seule');
+    drow('Signal'+info('signal'),sig==='buy'?'🟢 achat (>SMA)':sig==='sell'?'🔴 vente (<SMA)':'⚪ neutre')+
+    (dist!=null?drow('Prix vs SMA'+smaN+info('distsma'),(dist>=0?'+':'')+dist.toFixed(1)+'%'):'')+
+    (hasPos&&margin!=null?drow('Marge avant sortie SMA'+info('margesortie'),'<span style="color:'+mcol+'">'+margin.toFixed(1)+'%</span>'):'')+
+    drow('Sortie auto'+info('sortiesma'),(b.autoclose&&b.autoclose.active)?((b.autoclose.mode==='trailing'?'trailing ':'take-profit ')+b.autoclose.threshold_pct+'%'):'sortie SMA seule');
   // graphe prix vs SMA vs seuil de sortie (le "detail" utile)
   const hist=(HIST&&HIST[b.bot_id])||[];const cw=$('sh-chart-wrap');
   if(hist.length>3&&dist!=null&&b.current_price){
@@ -841,6 +934,11 @@ $('login-go').onclick=doLogin;
 $('login-pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 $('biolock-go').onclick=tryBioUnlock;
 $('biolock-pw').onclick=()=>{hideBioLock();showLogin();};
+// Glossaire : delegation (un tap sur un [data-gloss] ouvre la definition).
+document.addEventListener('click',e=>{const el=e.target.closest('[data-gloss]');if(el){e.stopPropagation();openGloss(el.dataset.gloss);}});
+$('gloscrim').onclick=closeGloss;
+const _gg=document.querySelector('#glosheet .g-grab');if(_gg)_gg.onclick=closeGloss;
+renderGlossaryList();
 boot();
 if('serviceWorker'in navigator&&location.protocol==='https:'){navigator.serviceWorker.register('/app/sw.js',{scope:'/app'}).catch(()=>{});}
 </script>
