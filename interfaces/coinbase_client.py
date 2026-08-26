@@ -181,6 +181,10 @@ class CoinbaseClient:
         # Dernier snapshot live SAIN — repli quand Coinbase renvoie une liste de
         # comptes incomplete (lecture degradee) au lieu d'afficher un faux 0.
         self._last_good_snapshot: dict | None = None
+        # Lectures de solde a ~0 consecutives par symbole : evite de supprimer une
+        # position juste ouverte quand le solde Coinbase est en retard de reglement
+        # (sinon perte de suivi -> rachat en double). Cf audit [9].
+        self._zero_reads: dict[str, int] = {}
         # Optionnel : resolver(symbol)->prix d'entree connu (ou None). Injecte par
         # BotSwarm depuis la DB, pour restaurer l'avg_price d'une position
         # re-adoptee apres reboot au lieu de l'ecraser avec le prix courant.
@@ -575,6 +579,19 @@ class CoinbaseClient:
         except Exception as exc:
             log.warning("cancel_order_error", order_id=order_id, error=str(exc))
 
+    def _record_maker_partial(self, symbol: str, fq: float, ap: float | None,
+                              limit_price: float, order_id: str) -> "Order":
+        """Enregistre un fill maker PARTIEL et renvoie un Order 'partial'. Le caller
+        renvoie cet Order tel quel -> PAS de fallback market pour le reste (sinon on
+        rachetait TOUT le montant = sur-depense + sur-exposition). Entree plus petite,
+        mais suivi correct et zero sur-depense (audit finding [2], critique)."""
+        px_f = ap or limit_price
+        self._live_port.update_buy(symbol, fq, px_f)
+        log.warning("maker_buy_partial", symbol=symbol, filled_qty=round(fq, 8),
+                    price=round(px_f, 6), order_id=order_id)
+        return Order(symbol=symbol, side="buy", qty=fq, price=px_f,
+                     order_id=order_id, status="partial")
+
     async def _live_maker_buy(self, symbol: str, usdc_amount: float,
                               bid: float, bid_str: str | None) -> Order | None:
         """
@@ -624,6 +641,8 @@ class CoinbaseClient:
                     return Order(symbol=symbol, side="buy", qty=qty_f, price=px_f,
                                  order_id=order_id, status="filled")
                 if status in ("CANCELLED", "EXPIRED", "FAILED", "REJECTED"):
+                    if (fq or 0.0) > 0:
+                        return self._record_maker_partial(symbol, fq, ap, limit_price, order_id)
                     log.info("maker_buy_terminated", symbol=symbol, status=status)
                     return None
 
@@ -636,6 +655,9 @@ class CoinbaseClient:
                 log.info("maker_buy_filled_late", symbol=symbol, order_id=order_id)
                 return Order(symbol=symbol, side="buy", qty=qty_f, price=px_f,
                              order_id=order_id, status="filled")
+            if (fq or 0.0) > 0:
+                # Fill PARTIEL puis annulation : on enregistre la portion achetee.
+                return self._record_maker_partial(symbol, fq, ap, limit_price, order_id)
             log.info("maker_buy_unfilled", symbol=symbol, order_id=order_id, waited_s=waited)
             return None
 
@@ -749,10 +771,17 @@ class CoinbaseClient:
             real_qty      = balances.get(base_currency, 0.0)
 
             if real_qty < 1e-8:
-                # Position fermee cote Coinbase — nettoyage local
-                if symbol in self._live_port.positions:
+                # Solde a ~0 : peut etre un simple retard de reglement juste apres un
+                # achat, pas une position fermee. On exige DEUX lectures nulles
+                # consecutives avant de supprimer -> evite la perte de suivi et le
+                # rachat en double sur lag de reglement (audit [9]).
+                n = self._zero_reads.get(symbol, 0) + 1
+                self._zero_reads[symbol] = n
+                if n >= 2 and symbol in self._live_port.positions:
                     del self._live_port.positions[symbol]
+                    self._zero_reads.pop(symbol, None)
                 continue
+            self._zero_reads.pop(symbol, None)   # solde revenu -> reset compteur
 
             # Sync quantite reelle (Coinbase fait foi)
             local_pos["qty"] = real_qty

@@ -130,12 +130,69 @@ def test_force_close_resumes_on_failure() -> None:
     trading_state.resume(bot_id)
 
 
+def test_maker_partial_recorded() -> None:
+    print("\n[2] fill maker partiel : enregistre, pas de fallback plein montant")
+    c = _live_client()
+    order = c._record_maker_partial("BTC-USDC", 0.0007, 60000.0, 59900.0, "oid")
+    pos = c._live_port.positions.get("BTC-USDC", {})
+    check("partiel enregistre dans le suivi", abs(pos.get("qty", 0) - 0.0007) < 1e-12)
+    check("Order status 'partial'", getattr(order, "status", "") == "partial")
+    check("Order qty = fill reel (pas le montant vise)", order.qty == 0.0007)
+    check("Order non-None -> caller ne re-market PAS le reste", order is not None)
+
+
+def test_snapshot_delete_grace() -> None:
+    print("\n[9] suppression de position : grace anti lag de reglement")
+
+    class Acct:
+        def __init__(self, cur, avail):
+            self.currency = cur; self.available_balance = {"value": str(avail)}
+
+    class Resp:
+        def __init__(self, accts):
+            self.accounts = accts; self.has_next = False; self.cursor = ""
+
+    class FakeCli:
+        def __init__(self, eth_present):
+            self.eth_present = eth_present
+        def get_accounts(self, limit=250, cursor=""):
+            accts = [Acct("USDC", 100.0)]
+            if self.eth_present:
+                accts.append(Acct("ETH", 0.02))
+            return Resp(accts)
+
+    c = _live_client()
+    c._live_port.positions["ETH-USDC"] = {"qty": 0.02, "avg_price": 2500.0}
+    async def _price(s): return 2500.0
+    c.get_price = _price                       # type: ignore
+
+    # ETH absent (lag) : 1re lecture nulle -> position CONSERVEE (grace)
+    c._real_client = FakeCli(eth_present=False)
+    asyncio.run(c._live_snapshot())
+    check("lag 1 lecture -> position conservee", "ETH-USDC" in c._live_port.positions)
+    check("zero_reads = 1", c._zero_reads.get("ETH-USDC") == 1)
+
+    # solde revenu -> compteur remis a zero, position conservee
+    c._real_client = FakeCli(eth_present=True)
+    asyncio.run(c._live_snapshot())
+    check("solde revenu -> compteur reset", c._zero_reads.get("ETH-USDC") is None)
+    check("solde revenu -> position conservee", "ETH-USDC" in c._live_port.positions)
+
+    # 2 lectures nulles consecutives -> suppression
+    c._real_client = FakeCli(eth_present=False)
+    asyncio.run(c._live_snapshot())   # zero_reads=1
+    asyncio.run(c._live_snapshot())   # zero_reads=2 -> delete
+    check("2 lectures nulles -> position supprimee", "ETH-USDC" not in c._live_port.positions)
+
+
 if __name__ == "__main__":
     print("=== Order execution — regression tests ===")
     test_blacklist_protects_held()
     test_base_increment_cache()
     test_duplicate_symbol_rejected()
     test_force_close_resumes_on_failure()
+    test_maker_partial_recorded()
+    test_snapshot_delete_grace()
     print(f"\n{'=' * 46}")
     if _failures:
         print(f"  {len(_failures)} test(s) EN ECHEC :")
