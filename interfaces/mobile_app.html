@@ -459,6 +459,8 @@ async function doLogin(){
     const r=await fetch('/app/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
     const j=await r.json().catch(()=>({}));
     if(r.ok&&j.token){TOKEN=j.token;localStorage.setItem(TOKEN_KEY,TOKEN);$('login-pw').value='';hideLogin();hideBioLock();if(!_started)startApp();else refresh();renderNotif();}
+    else if(r.ok&&j.auth==='disabled'){ // appli ouverte (pas d'APP_PASSWORD) : on entre sans jeton
+      $('login-pw').value='';hideLogin();hideBioLock();if(!_started)startApp();else refresh();}
     else{err.textContent=j.error||('Échec ('+r.status+')');}
   }catch(e){err.textContent='Réseau indisponible';}
 }
@@ -534,7 +536,8 @@ function renderBio(){
   }else{
     st.textContent='OFF';st.className='pv off';
     wrap.innerHTML='<button class="btn pos" id="bio-on">Activer le déverrouillage par empreinte</button>';
-    $('bio-on').onclick=()=>{ if(!TOKEN){toast('Connecte-toi d\'abord');showLogin();return;} bioRegister(); };
+    // Verrou LOCAL : n'exige aucun mot de passe serveur (marche meme sans APP_PASSWORD).
+    $('bio-on').onclick=bioRegister;
   }
 }
 // Demarrage : si l'empreinte est active et une session existe, exiger le deverrouillage.
@@ -544,7 +547,8 @@ function startApp(){
   refresh(); setInterval(refresh,5000); renderNotif(); renderBio();
 }
 function boot(){
-  if(bioEnabled() && TOKEN && bioSupported()){ showBioLock(); tryBioUnlock(); }
+  // Verrou biometrique local : independant du jeton serveur (marche en mode ouvert).
+  if(bioEnabled() && bioSupported()){ showBioLock(); tryBioUnlock(); }
   else { startApp(); }
 }
 
