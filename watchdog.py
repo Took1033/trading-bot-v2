@@ -13,7 +13,8 @@ Self-locating : il se base sur l'emplacement du fichier (pas sur le cwd), donc
 il marche quel que soit le lanceur (planificateur, double-clic, terminal).
 
 Checks :
-  1. Dashboard joignable      (http://localhost:PORT/api/portfolio)
+  1. Dashboard joignable      (http://localhost:PORT/api/health — sonde legere ;
+                               s'authentifie si APP_PASSWORD est defini)
   2. Log frais                (mtime de logs/trading.log < MAX_LOG_AGE_MIN)
   3. Drawdown                 (drawdown_pct du dashboard >= MAX_DD_PCT)
   4. Erreurs recentes         (lignes level=error sur la derniere heure)
@@ -61,22 +62,59 @@ except Exception:
     pass
 
 
-def _dashboard() -> dict | None:
-    url = f"http://localhost:{DASHBOARD_PORT}/api/portfolio"
+_TOKEN: str | None = None
+
+
+def _auth_token() -> str:
+    """Jeton de session si l'appli est protegee par APP_PASSWORD (sinon '')."""
+    global _TOKEN
+    if _TOKEN is not None:
+        return _TOKEN
+    pw = os.getenv("APP_PASSWORD", "")
+    if not pw:
+        _TOKEN = ""
+        return _TOKEN
     try:
-        with urllib.request.urlopen(url, timeout=8) as r:
+        data = json.dumps({"password": pw}).encode("utf-8")
+        req  = urllib.request.Request(
+            f"http://localhost:{DASHBOARD_PORT}/app/login", data=data,
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=8) as r:
+            _TOKEN = (json.loads(r.read().decode("utf-8")).get("token")) or ""
+    except Exception:
+        _TOKEN = ""
+    return _TOKEN
+
+
+def _get(path: str, timeout: float = 8.0) -> dict | list | None:
+    """GET authentifie (Bearer si APP_PASSWORD) sur le dashboard local."""
+    headers = {}
+    tok = _auth_token()
+    if tok:
+        headers["Authorization"] = "Bearer " + tok
+    try:
+        req = urllib.request.Request(f"http://localhost:{DASHBOARD_PORT}{path}", headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
     except Exception:
         return None
+
+
+def _health() -> dict | None:
+    # Sonde de VIE legere (pas d'appel Coinbase, pas de gros COUNT) : evite les faux
+    # "injoignable" quand /api/portfolio (lourd) est momentanement lent.
+    r = _get("/api/health", timeout=6.0)
+    return r if isinstance(r, dict) else None
+
+
+def _dashboard() -> dict | None:
+    r = _get("/api/portfolio")
+    return r if isinstance(r, dict) else None
 
 
 def _swarm() -> list | None:
-    url = f"http://localhost:{DASHBOARD_PORT}/api/swarm"
-    try:
-        with urllib.request.urlopen(url, timeout=8) as r:
-            return json.loads(r.read().decode("utf-8"))
-    except Exception:
-        return None
+    r = _get("/api/swarm")
+    return r if isinstance(r, list) else None
 
 
 def _fidelity_problems() -> list[str]:
@@ -144,18 +182,23 @@ def _recent_errors(window_min: float = 60.0) -> int:
 def _collect_problems() -> list[str]:
     problems: list[str] = []
 
-    snap = _dashboard()
-    if snap is None:
+    # Vie : sonde LEGERE /api/health. C'est le juge de "bot mort/fige", PAS le lourd
+    # /api/portfolio (dont une lenteur ponctuelle donnait de faux "injoignable").
+    if _health() is None:
         problems.append(
             f"Dashboard injoignable sur localhost:{DASHBOARD_PORT} — bot MORT ou fige ?"
         )
     else:
-        dd = snap.get("drawdown_pct")
-        if isinstance(dd, (int, float)) and dd >= MAX_DD_PCT:
-            problems.append(
-                f"Drawdown {dd:.2f}% sous le pic (seuil {MAX_DD_PCT:.0f}%) — "
-                f"capital {snap.get('total', 0):.2f} USDC."
-            )
+        # Drawdown en best-effort : si /api/portfolio est momentanement lent alors que
+        # /api/health repond, le bot est VIVANT -> on ne crie pas a l'anomalie.
+        snap = _dashboard()
+        if snap is not None:
+            dd = snap.get("drawdown_pct")
+            if isinstance(dd, (int, float)) and dd >= MAX_DD_PCT:
+                problems.append(
+                    f"Drawdown {dd:.2f}% sous le pic (seuil {MAX_DD_PCT:.0f}%) — "
+                    f"capital {snap.get('total', 0):.2f} USDC."
+                )
 
     age = _log_age_min()
     if age is None:
