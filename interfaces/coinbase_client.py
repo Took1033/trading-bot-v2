@@ -313,15 +313,20 @@ class CoinbaseClient:
             return mid
         except Exception as exc:
             msg = str(exc)
-            if "invalid product_id" in msg or "INVALID_ARGUMENT" in msg:
+            # On ne blackliste JAMAIS un symbole d'une position DETENUE (ou re-adoptee) :
+            # il doit rester pricable pour pouvoir sortir. Une erreur "invalid product_id"
+            # sur un actif suivi est traitee comme transitoire -> fallback API publique,
+            # plutot que de rendre la position impossible a vendre (piege a capital).
+            tracked = symbol in self._live_port.positions
+            if (not tracked) and ("invalid product_id" in msg or "INVALID_ARGUMENT" in msg):
                 # Paire inexistante chez Coinbase (dust orphelin type ACX-USDC) :
                 # on blackliste pour ne plus jamais rappeler le SDK sur ce symbole.
                 # Une seule erreur SDK loggee (celle-ci), puis silence.
                 self._invalid_products.add(symbol)
                 log.warning("price_product_blacklisted", symbol=symbol)
                 raise
-            log.warning("live_price_fallback", symbol=symbol, error=msg)
-            # Fallback sur l'API publique si le SDK echoue (erreur transitoire)
+            log.warning("live_price_fallback", symbol=symbol, error=msg, tracked=tracked)
+            # Fallback sur l'API publique (erreur transitoire, ou actif detenu a proteger)
             return await self._paper_price(symbol)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -340,14 +345,19 @@ class CoinbaseClient:
         if not hasattr(self, "_base_incr_cache"):
             self._base_incr_cache = {}
         inc = self._base_incr_cache.get(symbol)
-        if inc is None:
+        if not inc:   # None OU "" (echec precedent) -> (re)tenter, ne pas figer un echec
             try:
                 product = await self._run_sync(self._real_client.get_product, symbol)
                 inc = str(getattr(product, "base_increment", "") or "")
             except Exception as exc:
                 log.warning("base_increment_fetch_failed", symbol=symbol, error=str(exc)[:120])
                 inc = ""
-            self._base_incr_cache[symbol] = inc
+            # Ne mettre en cache QUE les valeurs valides : sinon un echec transitoire
+            # figerait le fallback 8 decimales -> sells rejetes en boucle sur une paire
+            # a pas grossier (INVALID_SIZE_PRECISION), position bloquee. On re-tente au
+            # prochain appel tant qu'on n'a pas d'increment valide.
+            if inc:
+                self._base_incr_cache[symbol] = inc
         try:
             if inc:
                 step = Decimal(inc)

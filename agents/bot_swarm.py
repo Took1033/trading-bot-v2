@@ -217,6 +217,11 @@ class BotSwarm:
         old_symbol = bot.symbol
         if old_symbol == new_symbol:
             return {"ok": False, "error": f"le bot trade déjà {new_symbol}"}
+        # Interdit de basculer sur une paire deja tradee par un autre bot (position
+        # partagee par symbole -> cloture croisee / double exposition).
+        other = next((b for b in self.bots if b.symbol == new_symbol and b.bot_id != bot.bot_id), None)
+        if other:
+            return {"ok": False, "error": f"{new_symbol} déjà tradé par le bot '{other.bot_id}'"}
 
         pos = self._coinbase.get_position(old_symbol)
         if pos and pos.get("qty", 0) > 0:
@@ -245,6 +250,11 @@ class BotSwarm:
             return {"ok": False, "error": "bot_id doit être alphanumérique (ex: ada)"}
         if self._find_bot(bot_id):
             return {"ok": False, "error": f"bot_id déjà utilisé : {bot_id}"}
+        # Le suivi de position est PAR SYMBOLE : deux bots sur la meme paire se
+        # partageraient la position (cloture croisee, double exposition). Interdit.
+        other = next((b for b in self.bots if b.symbol == symbol), None)
+        if other:
+            return {"ok": False, "error": f"{symbol} déjà tradé par le bot '{other.bot_id}'"}
         if not validate_symbol_format(symbol):
             return {"ok": False, "error": f"format de paire invalide : {symbol}"}
         if not await symbol_exists(symbol):
@@ -315,9 +325,21 @@ class BotSwarm:
         try:
             order = await self._coinbase.place_order(symbol, "sell", qty, force=True)
         except Exception as exc:
+            # La vente a echoue : NE PAS laisser le bot en pause, sinon ses sorties
+            # automatiques (stop/trailing/retournement SMA) restent DESACTIVEES et la
+            # position n'est plus protegee. On reprend le bot et on alerte.
+            trading_state.resume(bot_id)
             log.error("force_close_failed", bot_id=bot_id, symbol=symbol, error=str(exc))
+            try:
+                from interfaces import notifier
+                await notifier.notify(
+                    f"❌ *Clôture manuelle échouée* `{symbol}`\n`{exc}`\n"
+                    f"_Bot repris — ses sorties automatiques restent actives._"
+                )
+            except Exception:
+                pass
             return {"ok": False, "error": f"vente refusée : {exc}",
-                    "paused": True, "symbol": symbol}
+                    "paused": False, "symbol": symbol}
 
         fill_price = getattr(order, "price", 0.0) or avg_price
         pnl_pct    = ((fill_price - avg_price) / avg_price * 100) if avg_price > 0 else 0.0
