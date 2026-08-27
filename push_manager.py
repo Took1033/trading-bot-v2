@@ -148,12 +148,14 @@ def categorize(title: str, body: str = "") -> str:
         return "system"
     if any(k in t for k in ("rapport", "résumé", "resume", "hebdo", "quotidien", "bilan")):
         return "reports"
+    # 'gains' AVANT 'entries'/'exits' : l'alerte "position a +X%" contient "Entrée"
+    # dans son corps -> sinon classee a tort en 'entries'.
+    if any(k in t for k in ("position à +", "position a +", "🚀", "gros gain", "gain ouvert")):
+        return "gains"
     if any(k in t for k in ("entrée", "entree", "entry", "achat")):
         return "entries"
     if any(k in t for k in ("sortie", "clôtur", "clotur", "exit", "vente")):
         return "exits"
-    if any(k in t for k in ("position à +", "position a +", "🚀", "gain")):
-        return "gains"
     return "system"
 
 

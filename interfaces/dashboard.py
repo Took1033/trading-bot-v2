@@ -2487,6 +2487,29 @@ async def handle_release(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "action": "released"})
 
 
+_EUR_CACHE = {"ts": 0.0, "rate": 0.0}
+
+
+async def _eur_rate() -> float:
+    """Taux USDC->EUR (approx via USD), cache 1h. Repli 0.92 si le fetch echoue."""
+    import time as _t
+    now = _t.monotonic()
+    if _EUR_CACHE["rate"] > 0 and (now - _EUR_CACHE["ts"]) < 3600:
+        return _EUR_CACHE["rate"]
+    try:
+        import aiohttp
+        url = "https://api.coinbase.com/v2/exchange-rates?currency=USD"
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=aiohttp.ClientTimeout(total=6)) as r:
+                data = await r.json()
+                rate = float(data["data"]["rates"]["EUR"])
+                if rate > 0:
+                    _EUR_CACHE.update(ts=now, rate=rate)
+    except Exception as exc:
+        log.debug("eur_rate_fetch_failed", error=str(exc))
+    return _EUR_CACHE["rate"] or 0.92
+
+
 async def handle_config(request: web.Request) -> web.Response:
     """Config live (relit le .env a chaque appel) pour la carte 'Parametres & seuils'."""
     def fnum(k: str, d: str) -> float:
@@ -2508,6 +2531,7 @@ async def handle_config(request: web.Request) -> web.Response:
         "regime":       fbool("REGIME_FILTER_ENABLED"),
         "min_order":    fnum("MIN_ORDER_USDC", "1.0"),
         "max_spread":   fnum("LIVE_MAX_SPREAD_PCT", "0.15"),
+        "eur_rate":     await _eur_rate(),
     })
 
 
