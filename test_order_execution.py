@@ -44,30 +44,32 @@ def _live_client() -> CoinbaseClient:
 
 
 def test_blacklist_protects_held() -> None:
-    print("\n[4] blacklist : jamais sur un actif detenu")
+    print("\n[4] blacklist : dust inexistant OK, actif detenu protege des erreurs transitoires")
 
-    class FakeBidAskRaises:
-        def get_best_bid_ask(self, product_ids=None):
-            raise Exception("400 Bad Request: invalid product_id")
+    class FakeRaises:
+        def __init__(self, msg): self.msg = msg
+        def get_best_bid_ask(self, product_ids=None): raise Exception(self.msg)
 
+    async def _fb(sym): return 100.0
+
+    # dust NON detenu au produit inexistant -> blackliste
     c = _live_client()
-    c._real_client = FakeBidAskRaises()
-    async def _fallback(sym): return 100.0
-    c._paper_price = _fallback          # type: ignore  (evite le reseau)
-
-    # symbole NON detenu -> blacklist + raise
+    c._real_client = FakeRaises("400 Bad Request: invalid product_id")
+    c._paper_price = _fb                # type: ignore
     async def _untracked():
         try:
-            await c._live_price("ACX-USDC")
-            return False
+            await c._live_price("ACX-USDC"); return False
         except Exception:
             return "ACX-USDC" in c._invalid_products
-    check("symbole non detenu -> blackliste", asyncio.run(_untracked()) is True)
+    check("dust inexistant (non detenu) -> blackliste", asyncio.run(_untracked()) is True)
 
-    # symbole DETENU -> jamais blackliste, fallback prix public
-    c._live_port.positions["BTC-USDC"] = {"qty": 0.001, "avg_price": 100.0}
-    price = asyncio.run(c._live_price("BTC-USDC"))
-    check("actif detenu -> non blackliste", "BTC-USDC" not in c._invalid_products)
+    # actif DETENU + erreur TRANSITOIRE (INVALID_ARGUMENT) -> jamais blackliste, fallback
+    c2 = _live_client()
+    c2._real_client = FakeRaises("INVALID_ARGUMENT (transitoire)")
+    c2._paper_price = _fb               # type: ignore
+    c2._live_port.positions["BTC-USDC"] = {"qty": 0.001, "avg_price": 100.0}
+    price = asyncio.run(c2._live_price("BTC-USDC"))
+    check("actif detenu + erreur transitoire -> non blackliste", "BTC-USDC" not in c2._invalid_products)
     check("actif detenu -> prix via fallback", price == 100.0)
 
 
@@ -185,9 +187,37 @@ def test_snapshot_delete_grace() -> None:
     check("2 lectures nulles -> position supprimee", "ETH-USDC" not in c._live_port.positions)
 
 
+def test_snapshot_survives_unpriceable() -> None:
+    print("\n[flood] snapshot ne casse pas si UN actif suivi est impricable")
+
+    class Acct:
+        def __init__(self, cur, avail): self.currency = cur; self.available_balance = {"value": str(avail)}
+    class Resp:
+        def __init__(self, a): self.accounts = a; self.has_next = False; self.cursor = ""
+    class FakeCli:
+        def get_accounts(self, limit=250, cursor=""):
+            return Resp([Acct("USDC", 100.0), Acct("ETH", 0.02), Acct("ZZZ", 5.0)])
+
+    c = _live_client()
+    c._real_client = FakeCli()
+    c._live_port.positions["ETH-USDC"] = {"qty": 0.02, "avg_price": 2500.0}
+    c._live_port.positions["ZZZ-USDC"] = {"qty": 5.0,  "avg_price": 1.0}   # impricable
+    async def _price(s):
+        if s == "ZZZ-USDC": raise Exception("invalid product_id")
+        return 2500.0
+    c.get_price = _price                # type: ignore
+
+    snap = asyncio.run(c._live_snapshot())
+    check("snapshot renvoie un dict (pas d'exception)", isinstance(snap, dict))
+    pos = (snap or {}).get("positions") or {}
+    check("actif pricable present", "ETH-USDC" in pos)
+    check("actif impricable -> repli avg_price (pas de flood)", pos.get("ZZZ-USDC", {}).get("current_price") == 1.0)
+
+
 if __name__ == "__main__":
     print("=== Order execution — regression tests ===")
     test_blacklist_protects_held()
+    test_snapshot_survives_unpriceable()
     test_base_increment_cache()
     test_duplicate_symbol_rejected()
     test_force_close_resumes_on_failure()

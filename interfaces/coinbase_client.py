@@ -322,10 +322,12 @@ class CoinbaseClient:
             # sur un actif suivi est traitee comme transitoire -> fallback API publique,
             # plutot que de rendre la position impossible a vendre (piege a capital).
             tracked = symbol in self._live_port.positions
-            if (not tracked) and ("invalid product_id" in msg or "INVALID_ARGUMENT" in msg):
-                # Paire inexistante chez Coinbase (dust orphelin type ACX-USDC) :
-                # on blackliste pour ne plus jamais rappeler le SDK sur ce symbole.
-                # Une seule erreur SDK loggee (celle-ci), puis silence.
+            # "invalid product_id" = le produit n'existe GENUINEMENT PAS chez Coinbase
+            # (dust orphelin type ACX/FIGHT) -> blacklist, meme si le solde est suivi :
+            # un actif reellement tradable a un produit -USDC valide. "INVALID_ARGUMENT"
+            # seul peut etre transitoire -> on ne blackliste un symbole DETENU que sur la
+            # signature stable, jamais sur un actif detenu qu'on doit pouvoir vendre.
+            if "invalid product_id" in msg or ("INVALID_ARGUMENT" in msg and not tracked):
                 self._invalid_products.add(symbol)
                 log.warning("price_product_blacklisted", symbol=symbol)
                 raise
@@ -785,7 +787,17 @@ class CoinbaseClient:
 
             # Sync quantite reelle (Coinbase fait foi)
             local_pos["qty"] = real_qty
-            current_price    = await self.get_price(symbol)
+            # Un actif suivi momentanement/durablement IMPRICABLE (dust orphelin
+            # re-adopte, glitch prix) ne doit PAS faire echouer TOUT le snapshot :
+            # sinon chaque cycle logge "live_snapshot_failed" (flood d'erreurs +
+            # fausse alerte watchdog). On se replie sur l'avg_price connu et on continue.
+            try:
+                current_price = await self.get_price(symbol)
+            except Exception as exc:
+                log.debug("position_price_skipped", symbol=symbol, error=str(exc)[:100])
+                current_price = local_pos.get("avg_price") or 0.0
+                if current_price <= 0:
+                    continue
             value_usdc       = real_qty * current_price
             cost_usdc        = real_qty * local_pos.get("avg_price", current_price)
             # Net de l'aller-retour : ce que tu garderais si tu liquidais maintenant.
