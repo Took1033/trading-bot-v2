@@ -2510,6 +2510,27 @@ async def _eur_rate() -> float:
     return _EUR_CACHE["rate"] or 0.92
 
 
+async def handle_daily(request: web.Request) -> web.Response:
+    """Clotures journalieres + serie SMA50 (pour tracer la VRAIE SMA dans le temps sur
+    la fiche bot). Lecture seule ; cache TTL cote fetch_daily_closes."""
+    symbol = (request.query.get("symbol") or "").upper().strip()
+    if not re.match(r"^[A-Z0-9]{2,12}-[A-Z0-9]{2,6}$", symbol):
+        return web.json_response({"closes": [], "sma": []})
+    try:
+        from strategies.trend_daily import fetch_daily_closes, TREND_SMA_PERIOD
+        closes = await fetch_daily_closes(symbol)
+    except Exception as exc:
+        log.debug("daily_series_failed", symbol=symbol, error=str(exc))
+        return web.json_response({"closes": [], "sma": []})
+    p = TREND_SMA_PERIOD or 50
+    if not closes or len(closes) < p + 2:
+        return web.json_response({"closes": [], "sma": [], "sma_period": p})
+    span  = 90
+    start = max(p - 1, len(closes) - span)
+    sma   = [sum(closes[i - p + 1:i + 1]) / p for i in range(start, len(closes))]
+    return web.json_response({"closes": closes[start:], "sma": sma, "sma_period": p})
+
+
 async def handle_config(request: web.Request) -> web.Response:
     """Config live (relit le .env a chaque appel) pour la carte 'Parametres & seuils'."""
     def fnum(k: str, d: str) -> float:
@@ -2736,6 +2757,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/swarm",               handle_swarm)
     app.router.add_get("/api/portfolio",           handle_portfolio)
     app.router.add_get("/api/config",              handle_config)
+    app.router.add_get("/api/daily",               handle_daily)
     app.router.add_get("/api/director",            handle_director)
     app.router.add_get("/api/health",              handle_health)
     app.router.add_get("/api/decisions",           handle_decisions)

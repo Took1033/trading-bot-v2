@@ -389,7 +389,7 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
   <div id="sh-explain"></div>
   <div id="sh-rows"></div>
   <div id="sh-chart-wrap" style="display:none">
-    <div class="cl">Prix récent vs seuils</div>
+    <div class="cl">Prix vs SMA 50 j — 90 derniers jours</div>
     <div class="sh-leg"><span><i style="background:#eef3fa"></i>prix</span><span><i style="background:#5c9dff"></i>SMA</span><span><i style="background:#ff6d7d"></i>sortie SMA</span></div>
     <canvas id="sh-chart"></canvas>
   </div>
@@ -898,11 +898,9 @@ function openSheet(i){
     (hasPos&&margin!=null?drow('Marge avant sortie SMA'+info('margesortie'),'<span style="color:'+mcol+'">'+margin.toFixed(1)+'%</span>'):'')+
     drow('Sortie auto'+info('sortiesma'),(b.autoclose&&b.autoclose.active)?((b.autoclose.mode==='trailing'?'trailing ':'take-profit ')+b.autoclose.threshold_pct+'%'):'sortie SMA seule');
   // graphe prix vs SMA vs seuil de sortie (le "detail" utile)
-  const hist=(HIST&&HIST[b.bot_id])||[];const cw=$('sh-chart-wrap');
-  if(hist.length>3&&dist!=null&&b.current_price){
-    const smaLvl=b.current_price/(1+dist/100);const exitLvl=smaLvl*(1-exitBuf/100);
-    cw.style.display='block';requestAnimationFrame(()=>drawBotChart(hist,smaLvl,exitLvl));
-  }else{cw.style.display='none';}
+  const cw=$('sh-chart-wrap');
+  cw.style.display='block';
+  loadDailyChart(b.symbol, exitBuf);   // vraie SMA historique (clotures journalieres)
   // #2 — controle de la sortie auto depuis l'appli
   let selMode=(b.autoclose&&b.autoclose.active)?b.autoclose.mode:'pur';
   const curThr=(b.autoclose&&b.autoclose.threshold_pct)||10;
@@ -989,6 +987,51 @@ function drawBotChart(prices,sma,exitLvl){
   lab(last,col,fp(last));
   lab(sma,'#5c9dff','SMA '+fp(sma));
   if(Math.abs(Y(exitLvl)-Y(sma))>9) lab(exitLvl,'rgba(255,109,125,.9)','↧'+fp(exitLvl));
+}
+
+// #1 — VRAIE courbe SMA historique (clotures journalieres + SMA50 dans le temps).
+function drawDaily(closes,smaArr,buf){
+  const cv=$('sh-chart');if(!cv||!closes||closes.length<3||!smaArr||!smaArr.length)return;
+  const W=cv.clientWidth||280,H=cv.clientHeight||132,dpr=Math.min(2,window.devicePixelRatio||1);
+  cv.width=W*dpr;cv.height=H*dpr;const ctx=cv.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+  const n=Math.min(closes.length,smaArr.length), exitArr=smaArr.map(s=>s*(1-(buf||0)/100));
+  const all=closes.slice(0,n).concat(smaArr.slice(0,n)).concat(exitArr.slice(0,n));
+  let mn=Math.min(...all),mx=Math.max(...all);const rg=(mx-mn)||1;mn-=rg*0.08;mx+=rg*0.08;
+  const padL=6,padR=58,padT=8,padB=8,gw=W-padL-padR,gh=H-padT-padB;
+  const X=i=>padL+(n>1?i/(n-1)*gw:0), Y=v=>padT+gh-(v-mn)/(mx-mn)*gh;
+  const lastP=closes[n-1],lastS=smaArr[n-1],up=lastP>=lastS,col=up?'#3fd08a':'#ff6d7d';
+  const fp=v=>v>=1000?Math.round(v).toLocaleString('fr-FR'):v>=1?v.toFixed(2):v.toFixed(4);
+  ctx.strokeStyle='rgba(255,255,255,.05)';ctx.lineWidth=1;
+  for(let g=0;g<=3;g++){const y=padT+gh*g/3;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(padL+gw,y);ctx.stroke();}
+  // aire entre prix et SMA (verte quand le prix est au-dessus)
+  ctx.beginPath();ctx.moveTo(X(0),Y(closes[0]));for(let i=0;i<n;i++)ctx.lineTo(X(i),Y(closes[i]));
+  for(let i=n-1;i>=0;i--)ctx.lineTo(X(i),Y(smaArr[i]));ctx.closePath();
+  ctx.fillStyle=up?'rgba(63,208,138,.10)':'rgba(255,109,125,.10)';ctx.fill();
+  // seuil de sortie (rouge pointille, suit la SMA)
+  ctx.setLineDash([3,4]);ctx.lineWidth=1.3;ctx.strokeStyle='rgba(255,109,125,.6)';
+  ctx.beginPath();for(let i=0;i<n;i++){i?ctx.lineTo(X(i),Y(exitArr[i])):ctx.moveTo(X(i),Y(exitArr[i]));}ctx.stroke();
+  ctx.setLineDash([]);
+  // SMA 50j (bleu) — la vraie courbe
+  ctx.strokeStyle='rgba(92,157,255,.9)';ctx.lineWidth=1.8;ctx.lineJoin='round';
+  ctx.beginPath();for(let i=0;i<n;i++){i?ctx.lineTo(X(i),Y(smaArr[i])):ctx.moveTo(X(i),Y(smaArr[i]));}ctx.stroke();
+  // prix (couleur = tendance)
+  ctx.strokeStyle=col;ctx.lineWidth=2.2;ctx.lineJoin='round';ctx.lineCap='round';
+  ctx.beginPath();for(let i=0;i<n;i++){i?ctx.lineTo(X(i),Y(closes[i])):ctx.moveTo(X(i),Y(closes[i]));}ctx.stroke();
+  ctx.beginPath();ctx.arc(X(n-1),Y(lastP),3.2,0,7);ctx.fillStyle=col;ctx.fill();
+  ctx.font='600 9px ui-monospace,monospace';ctx.textBaseline='middle';ctx.textAlign='left';
+  const placed=[];const lab=(v,c,txt)=>{let y=Math.max(padT+5,Math.min(H-padB-5,Y(v)));while(placed.some(py=>Math.abs(py-y)<10))y+=10;placed.push(y);ctx.fillStyle=c;ctx.fillText(txt,padL+gw+5,y);};
+  lab(lastP,col,fp(lastP));
+  lab(lastS,'#5c9dff','SMA '+fp(lastS));
+  if(Math.abs(Y(exitArr[n-1])-Y(lastS))>9) lab(exitArr[n-1],'rgba(255,109,125,.9)','↧'+fp(exitArr[n-1]));
+}
+async function loadDailyChart(symbol,buf){
+  window._sheetSym=symbol;
+  try{
+    const d=await api('/api/daily?symbol='+encodeURIComponent(symbol));
+    if(window._sheetSym!==symbol)return;                 // fiche changee entre-temps
+    if(d&&d.closes&&d.closes.length>3){requestAnimationFrame(()=>{if(window._sheetSym===symbol)drawDaily(d.closes,d.sma,buf);});return;}
+  }catch(e){}
+  const cw=$('sh-chart-wrap');if(cw)cw.style.display='none';  // pas de daily dispo -> on masque
 }
 
 function drawEquity(){
