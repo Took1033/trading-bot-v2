@@ -38,6 +38,10 @@ body{padding-bottom:calc(70px + var(--safe-b));}
   padding:5px 11px;border-radius:999px;background:rgba(63,208,138,.14);color:var(--pos);}
 #bar .ks.on{background:rgba(255,109,125,.16);color:var(--neg);}
 #bar .upd{font-family:var(--mono);font-size:.6rem;color:var(--mut);margin-left:8px;}
+#bar .curtog{margin-left:8px;font-family:var(--mono);font-size:.8rem;font-weight:700;
+  width:26px;height:26px;border-radius:8px;border:1px solid var(--bd);background:var(--surf);
+  color:var(--ink2);cursor:pointer;flex-shrink:0;line-height:1;}
+#bar .curtog:active{transform:scale(.92);}
 
 /* ---- screens ---- */
 main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
@@ -281,7 +285,7 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 
 <div id="bar">
   <span class="live" id="live"></span><span class="logo">Kairos</span>
-  <span class="ks" id="ks">—</span><span class="upd" id="upd"></span>
+  <span class="ks" id="ks">—</span><span class="upd" id="upd"></span><button class="curtog" id="cur-tog">$</button>
 </div>
 
 <main>
@@ -447,7 +451,11 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 
 <script>
 const $=(id)=>document.getElementById(id);
-const fmt=(n)=>{n=Number(n)||0;return (n<0?'-$':'$')+Math.abs(n).toFixed(2);};
+// Devise d'affichage globale ($ USDC / € via le taux expose par /api/config).
+let CUR=localStorage.getItem('kairos_cur')||'usd';
+const curRate=()=>CUR==='eur'?((CFG&&CFG.eur_rate)||0.92):1;
+const curSym=()=>CUR==='eur'?'€':'$';
+const fmt=(n)=>{n=(Number(n)||0)*curRate();return (n<0?'-':'')+curSym()+Math.abs(n).toFixed(2);};
 const pct=(n)=>{n=Number(n)||0;return (n>=0?'+':'')+n.toFixed(2)+'%';};
 const esc=(s)=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 let SW=[], CFG={}, DIR={}, sheetOpen=false, EQ=[], eqPeriod=30, HIST={}, HEALTH={}, ONLINE=true;
@@ -895,15 +903,13 @@ function openSheet(i){
   const margin=dist!=null?dist+exitBuf:null;
   const mcol=margin==null?'':(margin>8?'var(--pos)':margin>3?'var(--warn)':'var(--neg)');
   const drow=(l,v)=>'<div class="drow"><span class="dl">'+l+'</span><span class="dv">'+v+'</span></div>';
-  const eur=(CFG&&CFG.eur_rate)||0.92;
-  const eurv=(n)=>((n<0?'-':'')+Math.abs(Number(n)||0).toFixed(2)+' €');
   const valUsd=hasPos?(p.qty*b.current_price):0, plUsd=hasPos?(p.qty*(b.current_price-(p.avg_price||0))):0;
   $('sh-explain').innerHTML=botExplain(b);
   $('sh-rows').innerHTML=
     drow('Statut',b.paused?'⏸ en pause':(hasPos?'position ouverte':'▶ actif (flat)'))+
     (hasPos?drow('Position'+info('position'),(p.qty||0).toPrecision(4)+' '+(b.symbol||'').split('-')[0]):'')+
-    (hasPos?drow('Valeur',fmt(valUsd)+' · '+eurv(valUsd*eur)):'')+
-    (hasPos?drow('P&L (€)'+info('pnllatent'),'<span style="color:'+(plUsd>=0?'var(--pos)':'var(--neg)')+'">'+(plUsd>=0?'+':'−')+Math.abs(plUsd*eur).toFixed(2)+' € ('+(pl>=0?'+':'')+pl.toFixed(1)+'%)</span>'):'')+
+    (hasPos?drow('Valeur',fmt(valUsd)):'')+
+    (hasPos?drow('P&L'+info('pnllatent'),'<span style="color:'+(plUsd>=0?'var(--pos)':'var(--neg)')+'">'+(plUsd>=0?'+':'')+fmt(plUsd)+' ('+(pl>=0?'+':'')+pl.toFixed(1)+'%)</span>'):'')+
     drow('Prix actuel',b.current_price?fmt(b.current_price):'—')+
     (hasPos?drow('Prix d\'entrée',fmt(p.avg_price)):'')+
     drow('Signal'+info('signal'),sig==='buy'?'🟢 achat (>SMA)':sig==='sell'?'🔴 vente (<SMA)':'⚪ neutre')+
@@ -1143,6 +1149,8 @@ async function renderNotifPrefs(){
 }
 
 $('tr-export').onclick=exportTrackRecord;
+$('cur-tog').textContent=curSym();
+$('cur-tog').onclick=()=>{CUR=(CUR==='eur'?'usd':'eur');localStorage.setItem('kairos_cur',CUR);$('cur-tog').textContent=curSym();refresh();};
 $('login-go').onclick=doLogin;
 $('login-pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 $('biolock-go').onclick=tryBioUnlock;
