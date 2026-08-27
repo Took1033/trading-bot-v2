@@ -227,7 +227,11 @@ class BotSwarm:
         if pos and pos.get("qty", 0) > 0:
             return {"ok": False, "error": f"position ouverte sur {old_symbol} — ferme-la avant de changer de paire"}
 
-        await bot.switch_symbol(new_symbol)
+        # Verrou d'ordre : le switch ne doit pas s'entrelacer avec un tick qui aurait
+        # calcule prix/signal sur l'ANCIENNE paire (audit [22]).
+        lock = getattr(bot, "_order_lock", None) or asyncio.Lock()
+        async with lock:
+            await bot.switch_symbol(new_symbol)
         self._persist()
         log.info("bot_pair_changed", bot_id=bot.bot_id, old=old_symbol, new=new_symbol)
         return {"ok": True, "bot_id": bot.bot_id, "old": old_symbol, "new": new_symbol}
@@ -312,34 +316,38 @@ class BotSwarm:
         if not bot:
             return {"ok": False, "error": f"bot inconnu : {bot_id}"}
 
-        symbol = bot.symbol
-        pos    = self._coinbase.get_position(symbol)
-        if not pos or pos.get("qty", 0) <= 0:
-            return {"ok": False, "error": f"aucune position ouverte sur {symbol}"}
+        # Verrou d'ordre : exclut un tick (entree/sortie) pendant lecture-position +
+        # vente -> jamais deux ventes sur la meme qty (audit [21]).
+        lock = getattr(bot, "_order_lock", None) or asyncio.Lock()
+        async with lock:
+            symbol = bot.symbol
+            pos    = self._coinbase.get_position(symbol)
+            if not pos or pos.get("qty", 0) <= 0:
+                return {"ok": False, "error": f"aucune position ouverte sur {symbol}"}
 
-        # 1) Pause d'abord : empêche un tick de racheter pendant/après la vente.
-        trading_state.pause(bot_id)
+            # 1) Pause d'abord : empêche un tick de racheter pendant/après la vente.
+            trading_state.pause(bot_id)
 
-        qty       = pos["qty"]
-        avg_price = pos.get("avg_price", 0.0) or 0.0
-        try:
-            order = await self._coinbase.place_order(symbol, "sell", qty, force=True)
-        except Exception as exc:
-            # La vente a echoue : NE PAS laisser le bot en pause, sinon ses sorties
-            # automatiques (stop/trailing/retournement SMA) restent DESACTIVEES et la
-            # position n'est plus protegee. On reprend le bot et on alerte.
-            trading_state.resume(bot_id)
-            log.error("force_close_failed", bot_id=bot_id, symbol=symbol, error=str(exc))
+            qty       = pos["qty"]
+            avg_price = pos.get("avg_price", 0.0) or 0.0
             try:
-                from interfaces import notifier
-                await notifier.notify(
-                    f"❌ *Clôture manuelle échouée* `{symbol}`\n`{exc}`\n"
-                    f"_Bot repris — ses sorties automatiques restent actives._"
-                )
-            except Exception:
-                pass
-            return {"ok": False, "error": f"vente refusée : {exc}",
-                    "paused": False, "symbol": symbol}
+                order = await self._coinbase.place_order(symbol, "sell", qty, force=True)
+            except Exception as exc:
+                # La vente a echoue : NE PAS laisser le bot en pause, sinon ses sorties
+                # automatiques (stop/trailing/retournement SMA) restent DESACTIVEES et la
+                # position n'est plus protegee. On reprend le bot et on alerte.
+                trading_state.resume(bot_id)
+                log.error("force_close_failed", bot_id=bot_id, symbol=symbol, error=str(exc))
+                try:
+                    from interfaces import notifier
+                    await notifier.notify(
+                        f"❌ *Clôture manuelle échouée* `{symbol}`\n`{exc}`\n"
+                        f"_Bot repris — ses sorties automatiques restent actives._"
+                    )
+                except Exception:
+                    pass
+                return {"ok": False, "error": f"vente refusée : {exc}",
+                        "paused": False, "symbol": symbol}
 
         fill_price = getattr(order, "price", 0.0) or avg_price
         pnl_pct    = ((fill_price - avg_price) / avg_price * 100) if avg_price > 0 else 0.0

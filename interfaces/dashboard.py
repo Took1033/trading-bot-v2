@@ -59,9 +59,19 @@ def _db() -> sqlite3.Connection:
 
 
 def _live_start_ts(conn: sqlite3.Connection) -> str | None:
-    """Timestamp du 1er snapshot live (1er passage sous PAPER_LIVE_SPLIT). None en paper."""
+    """Debut de l'ere live. None en paper.
+    1) Marqueur EXPLICITE de la 1re transaction live (.first_live_trade.txt) — robuste.
+    2) Repli : 1er snapshot sous le seuil PAPER_LIVE_SPLIT (heuristique fragile — audit [27])."""
     if MODE != "live":
         return None
+    try:
+        mk = Path(DB_PATH).parent / ".first_live_trade.txt"
+        if mk.exists():
+            ts = mk.read_text(encoding="utf-8").strip()
+            if ts:
+                return ts
+    except Exception:
+        pass
     row = conn.execute(
         "SELECT timestamp FROM portfolio_snapshots "
         "WHERE total_usdc < ? ORDER BY timestamp ASC LIMIT 1",

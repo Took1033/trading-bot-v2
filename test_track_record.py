@@ -111,10 +111,29 @@ def test_fingerprint_deterministic() -> None:
     check("falsification detectee (empreinte differente)", fp(tampered) != f1)
 
 
+def test_live_start_marker() -> None:
+    print("\n[27] _live_start_ts prefere le marqueur explicite (vs seuil fragile)")
+    from pathlib import Path as _P
+    mk = _P(os.environ["DB_PATH"]).parent / ".first_live_trade.txt"
+    mk.write_text("2026-05-30T09:28:39.179055+00:00", encoding="utf-8")
+    orig = dashboard.MODE
+    dashboard.MODE = "live"
+    try:
+        conn = sqlite3.connect(os.environ["DB_PATH"])
+        ts = dashboard._live_start_ts(conn)
+        conn.close()
+        check("retourne le timestamp du marqueur", ts == "2026-05-30T09:28:39.179055+00:00")
+    finally:
+        dashboard.MODE = orig
+        try: mk.unlink()
+        except Exception: pass
+
+
 if __name__ == "__main__":
     print("=== Track record (objectif ②) — tests hermetiques ===")
     test_closed_trades()
     test_fingerprint_deterministic()
+    test_live_start_marker()
     print(f"\n{'=' * 46}")
     if _failures:
         print(f"  {len(_failures)} test(s) EN ECHEC :")

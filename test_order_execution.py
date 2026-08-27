@@ -214,10 +214,44 @@ def test_snapshot_survives_unpriceable() -> None:
     check("actif impricable -> repli avg_price (pas de flood)", pos.get("ZZZ-USDC", {}).get("current_price") == 1.0)
 
 
+def test_force_close_serialized_by_lock() -> None:
+    print("\n[21] force_close serialise par le verrou d'ordre (pas de double vente)")
+    from agents.bot_swarm import BotSwarm
+    from agents import trading_state
+    sw = BotSwarm()
+    bot = sw.bots[0]
+    check("le TrendBot a un _order_lock", hasattr(bot, "_order_lock"))
+
+    class FakeCB:
+        def __init__(self): self.orders = []
+        def get_position(self, s): return {"qty": 0.01, "avg_price": 100.0}
+        async def place_order(self, s, side, qty, force=False):
+            self.orders.append((s, side, qty))
+            class O: order_id = "t"; price = 100.0
+            return O()
+        async def get_portfolio_snapshot(self): return {"total_usdc": 200.0, "usdc_balance": 100.0}
+    sw._coinbase = FakeCB()
+
+    async def _run():
+        await bot._order_lock.acquire()                  # simule un tick en cours
+        task = asyncio.create_task(sw.force_close(bot.bot_id))
+        await asyncio.sleep(0.05)
+        blocked = (not task.done()) and len(sw._coinbase.orders) == 0
+        bot._order_lock.release()
+        res = await task
+        return blocked, res, len(sw._coinbase.orders)
+
+    blocked, res, n = asyncio.run(_run())
+    check("force_close BLOQUE tant que le tick tient le verrou", blocked is True)
+    check("apres release -> une seule vente executee", n == 1 and bool(res.get("ok")))
+    trading_state.resume(bot.bot_id)
+
+
 if __name__ == "__main__":
     print("=== Order execution — regression tests ===")
     test_blacklist_protects_held()
     test_snapshot_survives_unpriceable()
+    test_force_close_serialized_by_lock()
     test_base_increment_cache()
     test_duplicate_symbol_rejected()
     test_force_close_resumes_on_failure()

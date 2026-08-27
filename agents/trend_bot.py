@@ -81,6 +81,10 @@ class TrendBot:
         self._last_dist: float | None = None   # distance prix vs SMA (%) du dernier signal
         self._peak_price:    float = 0.0   # plus haut depuis l'entree (trailing-stop)
         self._gain_alerted:  bool  = False  # alerte "+X%" deja envoyee pour cette position
+        # Serialise lecture-position + ordre : empeche un tick (entree/sortie) et une
+        # cloture manuelle (force_close) / switch de paire de s'entrelacer sur la meme
+        # position -> jamais deux ventes sur la meme qty (audit [21][22]).
+        self._order_lock = asyncio.Lock()
 
         log.info("trend_bot_ready", bot_id=self.bot_id, symbol=symbol,
                  sma_check_s=TREND_CHECK_S, position_pct=TREND_POSITION_PCT)
@@ -99,7 +103,8 @@ class TrendBot:
         try:
             while True:
                 try:
-                    await self._tick()
+                    async with self._order_lock:   # exclut force_close/switch pendant le tick
+                        await self._tick()
                 except Exception as exc:
                     log.error("trend_bot_tick_error", bot_id=self.bot_id, error=str(exc))
                 await asyncio.sleep(TREND_CHECK_S)
@@ -294,6 +299,13 @@ class TrendBot:
             confidence=sig.confidence, reasoning=f"TREND ENTRY : {sig.reasoning}",
             metadata=f'{{"order_id":"{order.order_id}","price":{round(price,4)},"qty":{round(qty,8)}}}',
         )
+        # Marqueur explicite de la 1re transaction live (idempotent) : borne robuste de
+        # l'ere live pour le track record, sans dependre du seuil PAPER_LIVE_SPLIT (audit [27]).
+        if getattr(self._coinbase, "mode", "paper") == "live":
+            try:
+                self._memory.mark_first_live_trade()
+            except Exception as exc:
+                log.debug("mark_first_live_failed", error=str(exc))
         self._memory.record_snapshot(await self._coinbase.get_portfolio_snapshot())
         await notifier.notify(
             f"📈 *TREND — Entrée* `{self.symbol}`\n"
