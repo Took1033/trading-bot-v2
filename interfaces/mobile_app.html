@@ -902,6 +902,12 @@ function openSheet(i){
   const smaN=(CFG&&CFG.sma_period)?CFG.sma_period:50;const exitBuf=(CFG&&CFG.exit_buffer)||0;
   const margin=dist!=null?dist+exitBuf:null;
   const mcol=margin==null?'':(margin>8?'var(--pos)':margin>3?'var(--warn)':'var(--neg)');
+  // P&L que donnerait la SORTIE AUTO si elle se declenchait maintenant (au niveau SMA).
+  // Repond a "si je laisse courir, je sors a combien ?" : positif si la SMA est passee
+  // au-dessus de l'entree (le trend a dure), negatif si le prix a spike loin devant une
+  // SMA encore basse (montee trop rapide).
+  const smaNow=(dist!=null&&b.current_price)?b.current_price/(1+dist/100):null;
+  const exitPnl=(smaNow&&p.avg_price>0)?(smaNow/p.avg_price-1)*100:null;
   const drow=(l,v)=>'<div class="drow"><span class="dl">'+l+'</span><span class="dv">'+v+'</span></div>';
   const valUsd=hasPos?(p.qty*b.current_price):0, plUsd=hasPos?(p.qty*(b.current_price-(p.avg_price||0))):0;
   $('sh-explain').innerHTML=botExplain(b);
@@ -915,6 +921,7 @@ function openSheet(i){
     drow('Signal'+info('signal'),sig==='buy'?'🟢 achat (>SMA)':sig==='sell'?'🔴 vente (<SMA)':'⚪ neutre')+
     (dist!=null?drow('Prix vs SMA'+smaN+info('distsma'),(dist>=0?'+':'')+dist.toFixed(1)+'%'):'')+
     (hasPos&&margin!=null?drow('Marge avant sortie SMA'+info('margesortie'),'<span style="color:'+mcol+'">'+margin.toFixed(1)+'%</span>'):'')+
+    (hasPos&&exitPnl!=null?drow('Si sortie SMA ≈'+info('sortiesma'),'<span style="color:'+(exitPnl>=0?'var(--pos)':'var(--neg)')+'">'+(exitPnl>=0?'+':'')+exitPnl.toFixed(1)+'%</span>'):'')+
     drow('Sortie auto'+info('sortiesma'),(b.autoclose&&b.autoclose.active)?((b.autoclose.mode==='trailing'?'trailing ':'take-profit ')+b.autoclose.threshold_pct+'%'):'sortie SMA seule');
   // graphe prix vs SMA vs seuil de sortie (le "detail" utile)
   const cw=$('sh-chart-wrap');
