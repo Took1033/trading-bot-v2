@@ -75,6 +75,15 @@ async def main() -> None:
             print(f"Dashboard injoignable ({exc}). Le bot tourne-t-il ? (http://localhost:8080)")
             return
 
+        # Boite noire d'execution (Axe 2) : fidelite bot<->broker. Tolerant a une
+        # version de dashboard sans /api/health.exec (reconcile reste utilisable).
+        exec_state = None
+        try:
+            _health = await jget(s, f"{DASH}/api/health")
+            exec_state = _health.get("exec")
+        except Exception:
+            pass
+
         sma_p = int(cfg.get("sma_period", 50))
         exit_b = float(cfg.get("exit_buffer", 0.0))
         entry_b = 0.0   # non expose par /api/config -> defaut historique
@@ -140,6 +149,33 @@ async def main() -> None:
         else:
             print("  Aucune anomalie : chaque bot est dans l'etat que la strategie dicte "
                   "(ecarts expliques inclus).")
+        print()
+
+        # ── FIDELITE BROKER (Axe 2) : etat INTERNE du bot vs realite Coinbase ──
+        # Complementaire de la fidelite STRATEGIE ci-dessus : ici on regarde si le
+        # suivi local du bot colle aux vrais soldes (source des faux fills / double-vente).
+        print("=" * 78)
+        if not exec_state:
+            print("  FIDELITE BROKER : indisponible (dashboard sans boite noire ?).")
+        else:
+            c   = exec_state.get("counters", {}) or {}
+            div = exec_state.get("divergences", 0)
+            est = exec_state.get("fills_estimated", 0)
+            age = exec_state.get("cycle_age_s")
+            print(f"  FIDELITE BROKER (bot <-> Coinbase)  -  depuis {exec_state.get('since', '?')}")
+            print(f"    fills={c.get('fill', 0)} (dont estimes {est})   "
+                  f"divergences={div}   purges_fantome={c.get('phantom_purge', 0)}   "
+                  f"snap_degrades={c.get('snapshot_degraded', 0)}   retries_REST={c.get('rest_retry', 0)}")
+            if age is not None:
+                print(f"    dernier cycle d'execution il y a {age:.0f}s")
+            last_div = exec_state.get("last_divergence")
+            if last_div:
+                print(f"    !! derniere divergence : {last_div.get('symbol')}  "
+                      f"local={last_div.get('local_qty')}  reel={last_div.get('real_qty')}  "
+                      f"(delta {last_div.get('delta')})")
+            verdict = ("OK — le suivi local reflete la realite Coinbase" if div == 0
+                       else f"!! {div} divergence(s) — auditer la synchro du suivi local")
+            print(f"    -> {verdict}")
         print()
 
 

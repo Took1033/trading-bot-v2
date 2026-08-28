@@ -507,6 +507,14 @@ function renderHealth(){
     row('Auth Coinbase',checks.coinbase?g(checks.coinbase.level):'<span class="pv">—</span>')+
     row('Dernier signal','<span class="pv">'+(ONLINE?relTime(h.last_decision_ts):'hors ligne')+'</span>')+
     row('Entrées',entries)+
+    row('Fidélité broker',(function(){
+      // Axe 2 — boite noire : le suivi local colle-t-il aux vrais soldes Coinbase ?
+      const x=h.exec; if(!x)return '<span class="pv">—</span>';
+      const d=x.divergences||0, est=x.fills_estimated||0;
+      if(d>0)return '<span class="pv" style="color:var(--warn)">⚠ '+d+' divergence'+(d>1?'s':'')+'</span>';
+      const suff=est>0?' · '+est+' fill'+(est>1?'s':'')+' estimé'+(est>1?'s':''):'';
+      return '<span class="pv on">✓ fidèle'+suff+'</span>';
+    })())+
     row('Protection appli',(function(){
       const bio=bioEnabled();
       if(h.auth_enabled&&bio)return '<span class="pv on">mot de passe + empreinte</span>';
