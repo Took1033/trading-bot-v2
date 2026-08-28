@@ -247,11 +247,47 @@ def test_force_close_serialized_by_lock() -> None:
     trading_state.resume(bot.bot_id)
 
 
+def test_live_order_uses_real_fill() -> None:
+    print("\n[18/19/25] _live_order utilise le fill REEL (repli sur l'estime)")
+
+    class Lvl:
+        def __init__(self, p): self.price = str(p)
+    class PB:
+        def __init__(self, b, a): self.bids = [Lvl(b)]; self.asks = [Lvl(a)]
+    class BB:
+        def __init__(self, b, a): self.pricebooks = [PB(b, a)]
+    class Res:
+        def __init__(self): self.success = True; self.order_id = "oid-1"; self.error_response = {}
+    class OrderObj:
+        def __init__(self, fq, ap): self.status = "FILLED"; self.filled_size = fq; self.average_filled_price = ap
+    class GetResp:
+        def __init__(self, o): self.order = o
+    class FakeClient:
+        def __init__(self, fq, ap): self.fq = fq; self.ap = ap
+        def get_best_bid_ask(self, product_ids=None): return BB(60000, 60020)
+        def create_order(self, **k): return Res()
+        def get_order(self, order_id=None): return GetResp(OrderObj(self.fq, self.ap))
+
+    # fill REEL connu -> qty/px du fill, pas l'estime
+    c = _live_client(); c._real_client = FakeClient(0.0009, 60050.0)
+    order = asyncio.run(c._live_order("BTC-USDC", "buy", 0.001, force=False))
+    check("buy: qty = fill reel (0.0009)", abs(order.qty - 0.0009) < 1e-9)
+    check("buy: prix = prix de fill (60050)", abs(order.price - 60050.0) < 1e-6)
+    check("buy: suivi mis a jour au fill", abs(c._live_port.positions["BTC-USDC"]["avg_price"] - 60050.0) < 1e-6)
+
+    # fill illisible -> repli sur l'estime (usdc/mid), jamais pire qu'avant
+    c2 = _live_client(); c2._real_client = FakeClient(None, None)
+    order2 = asyncio.run(c2._live_order("ETH-USDC", "buy", 0.02, force=False))
+    est = round(0.02 * 60010.0, 2) / 60010.0    # usdc_amount / mid
+    check("buy sans fill lisible -> repli estime", abs(order2.qty - est) < 1e-6)
+
+
 if __name__ == "__main__":
     print("=== Order execution — regression tests ===")
     test_blacklist_protects_held()
     test_snapshot_survives_unpriceable()
     test_force_close_serialized_by_lock()
+    test_live_order_uses_real_fill()
     test_base_increment_cache()
     test_duplicate_symbol_rejected()
     test_force_close_resumes_on_failure()

@@ -530,22 +530,40 @@ class CoinbaseClient:
 
         order_id = result.order_id if hasattr(result, "order_id") else client_order_id
 
-        # Mise a jour du suivi local des positions
+        # Lire le FILL REEL (qty/prix executes) plutot que l'estime (usdc/mid pour un
+        # achat, qty demandee pour une vente) : sinon avg_price et qty sont faux ->
+        # P&L, stops et track record biaises (audit [18][19][25]). Repli sur l'estime
+        # si la lecture du statut echoue -> jamais pire que le comportement actuel.
+        filled_qty = filled_px = None
+        for _ in range(2):
+            try:
+                _st, _fq, _ap = await self._get_order_status(order_id)
+                if _fq and _fq > 0:
+                    filled_qty = _fq
+                    if _ap and _ap > 0:
+                        filled_px = _ap
+                    break
+            except Exception as exc:
+                log.debug("fill_read_failed", order_id=order_id, error=str(exc))
+            await asyncio.sleep(0.5)   # le market IOC se regle quasi instantanement
+
         if side == "buy":
-            # Recalcul de la vraie quantite achetee (Coinbase peut ajuster)
-            real_qty = usdc_amount / price
-            self._live_port.update_buy(symbol, real_qty, price)
+            qty_eff = filled_qty if filled_qty is not None else usdc_amount / price
+            px_eff  = filled_px  if filled_px  is not None else price
+            self._live_port.update_buy(symbol, qty_eff, px_eff)
         else:
-            self._live_port.update_sell(symbol, qty)
+            qty_eff = filled_qty if filled_qty is not None else qty
+            px_eff  = filled_px  if filled_px  is not None else price
+            self._live_port.update_sell(symbol, qty_eff)
 
         log.info("live_order_filled",
                  symbol=symbol, side=side,
-                 qty=round(qty, 8), price=round(price, 2),
-                 order_id=order_id)
+                 qty=round(qty_eff, 8), price=round(px_eff, 6),
+                 estimated=(filled_qty is None), order_id=order_id)
 
         return Order(
-            symbol=symbol, side=side, qty=qty,
-            price=price, order_id=order_id, status="filled",
+            symbol=symbol, side=side, qty=qty_eff,
+            price=px_eff, order_id=order_id, status="filled",
         )
 
     # ─────────────────────────────────────────────────────────────────────────
