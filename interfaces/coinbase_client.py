@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -28,6 +29,30 @@ load_dotenv()
 log = structlog.get_logger()
 
 MODE: Literal["paper", "live"] = os.getenv("COINBASE_MODE", "paper")  # type: ignore
+
+# ── Throttle global des appels REST prives (anti 429) ─────────────────────────
+# TOUS les CoinbaseClient du process (essaim + market_agent + orchestrator)
+# partagent ce gate : au plus 1 appel SDK toutes les _MIN_CALL_INTERVAL_S. Sans
+# ca, les 6-7 bots + la boucle snapshot tapent l'API en meme temps et depassent
+# le quota Coinbase ensemble -> flot de "429 Too Many Requests" que le retry ne
+# resout pas (chaque bot re-essaie pendant que les autres continuent de taper).
+# 0.12s ≈ 8 req/s, tres en dessous de la limite ~30/s : marge pour les rafales.
+_MIN_CALL_INTERVAL_S = float(os.getenv("COINBASE_MIN_CALL_INTERVAL_S", "0.12"))
+_rate_lock = asyncio.Lock()
+_last_call_ts = 0.0
+
+
+async def _rate_gate() -> None:
+    """Espace globalement les appels REST prives. Serialise l'attente sous verrou
+    pour que N coroutines concurrentes soient bien lissees a 1/_MIN_CALL_INTERVAL_S."""
+    global _last_call_ts
+    if _MIN_CALL_INTERVAL_S <= 0:
+        return
+    async with _rate_lock:
+        wait = _MIN_CALL_INTERVAL_S - (time.monotonic() - _last_call_ts)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_call_ts = time.monotonic()
 
 # Taille minimum de trade en USDC (Coinbase rejette les ordres < 1 USDC)
 MIN_ORDER_USDC = float(os.getenv("MIN_ORDER_USDC", "1.0"))
@@ -256,6 +281,7 @@ class CoinbaseClient:
         last_exc = None
         for attempt in range(3):
             try:
+                await _rate_gate()   # plafonne le debit global -> evite les 429
                 return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
             except Exception as exc:
                 msg = str(exc).lower()

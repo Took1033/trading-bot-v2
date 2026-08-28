@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -282,12 +283,37 @@ def test_live_order_uses_real_fill() -> None:
     check("buy sans fill lisible -> repli estime", abs(order2.qty - est) < 1e-6)
 
 
+def test_rate_gate_spaces_calls() -> None:
+    print("\n[1a] throttle global : appels REST espaces (anti 429)")
+    from interfaces import coinbase_client as cc
+    orig = cc._MIN_CALL_INTERVAL_S
+    cc._MIN_CALL_INTERVAL_S = 0.05
+    cc._last_call_ts = 0.0
+    stamps: list[float] = []
+
+    async def _fire():
+        async def one():
+            await cc._rate_gate()
+            stamps.append(time.monotonic())
+        await asyncio.gather(*[one() for _ in range(5)])
+
+    try:
+        asyncio.run(_fire())
+    finally:
+        cc._MIN_CALL_INTERVAL_S = orig
+    stamps.sort()
+    gaps = [stamps[i + 1] - stamps[i] for i in range(len(stamps) - 1)]
+    check("5 appels concurrents -> 4 intervalles", len(gaps) == 4)
+    check("chaque intervalle >= ~interval (lissage global)", all(g >= 0.045 for g in gaps))
+
+
 if __name__ == "__main__":
     print("=== Order execution — regression tests ===")
     test_blacklist_protects_held()
     test_snapshot_survives_unpriceable()
     test_force_close_serialized_by_lock()
     test_live_order_uses_real_fill()
+    test_rate_gate_spaces_calls()
     test_base_increment_cache()
     test_duplicate_symbol_rejected()
     test_force_close_resumes_on_failure()
