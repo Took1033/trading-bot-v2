@@ -1,0 +1,46 @@
+#!/bin/sh
+# Hook pre-push Kairos — filet anti-régression local.
+# Lance run_tests.py (tests hermétiques, paper forcé) avant chaque push.
+# Bypass explicite si besoin : git push --no-verify
+#
+# Activation (une fois) :  git config core.hooksPath .githooks
+#
+# Philosophie : ce hook AIDE, il n'OBSTRUE pas. S'il ne trouve pas de Python
+# capable (ex. venv absent d'un worktree), il avertit et laisse passer —
+# la CI GitHub Actions reste le filet dur côté serveur.
+
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# Résolution du Python, du plus spécifique au plus générique.
+PY=""
+if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/Scripts/python.exe" ]; then
+  PY="$VIRTUAL_ENV/Scripts/python.exe"                 # venv activé (Windows)
+elif [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+  PY="$VIRTUAL_ENV/bin/python"                         # venv activé (unix)
+elif [ -x ".venv/Scripts/python.exe" ]; then
+  PY=".venv/Scripts/python.exe"                        # venv local (Windows)
+elif [ -x ".venv/bin/python" ]; then
+  PY=".venv/bin/python"                                # venv local (unix)
+elif command -v python >/dev/null 2>&1; then
+  PY="python"
+elif command -v python3 >/dev/null 2>&1; then
+  PY="python3"
+fi
+
+if [ -z "$PY" ]; then
+  echo "[pre-push] Aucun Python trouvé — tests locaux ignorés (la CI GitHub prendra le relais)."
+  exit 0
+fi
+
+echo "[pre-push] Vérification anti-régression via $PY run_tests.py ..."
+if "$PY" run_tests.py; then
+  echo "[pre-push] Tout vert — push autorisé."
+  exit 0
+else
+  echo ""
+  echo "[pre-push] ÉCHEC des tests — push BLOQUÉ."
+  echo "           Corrige, ou force en connaissance de cause : git push --no-verify"
+  exit 1
+fi
