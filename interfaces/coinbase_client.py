@@ -28,6 +28,17 @@ load_dotenv()
 
 log = structlog.get_logger()
 
+# Boîte noire d'exécution (Axe 2) : observabilité pure, jamais bloquante. Si le
+# module manque pour une raison quelconque, un stub no-op prend le relais -> le
+# client de trading n'est JAMAIS impacté par un souci d'observabilité.
+try:
+    import exec_observer as _obs
+except Exception:  # pragma: no cover
+    class _ObsStub:
+        def __getattr__(self, _name):
+            return lambda *a, **k: None
+    _obs = _ObsStub()  # type: ignore
+
 MODE: Literal["paper", "live"] = os.getenv("COINBASE_MODE", "paper")  # type: ignore
 
 # ── Throttle global des appels REST prives (anti 429) ─────────────────────────
@@ -302,6 +313,7 @@ class CoinbaseClient:
                 log.warning("coinbase_retry",
                             attempt=attempt + 1, wait_s=wait,
                             error=str(exc)[:100])
+                _obs.record_retry(str(exc)[:100], attempt=attempt + 1)
                 await asyncio.sleep(wait)
         raise last_exc or RuntimeError("All retries exhausted")
 
@@ -586,6 +598,8 @@ class CoinbaseClient:
                  symbol=symbol, side=side,
                  qty=round(qty_eff, 8), price=round(px_eff, 6),
                  estimated=(filled_qty is None), order_id=order_id)
+        _obs.record_fill(symbol, side, qty_eff, px_eff,
+                         estimated=(filled_qty is None), order_id=order_id)
 
         return Order(
             symbol=symbol, side=side, qty=qty_eff,
@@ -635,6 +649,8 @@ class CoinbaseClient:
         self._live_port.update_buy(symbol, fq, px_f)
         log.warning("maker_buy_partial", symbol=symbol, filled_qty=round(fq, 8),
                     price=round(px_f, 6), order_id=order_id)
+        _obs.record_fill(symbol, "buy", fq, px_f, estimated=(ap is None),
+                         order_id=order_id, status="partial")
         return Order(symbol=symbol, side="buy", qty=fq, price=px_f,
                      order_id=order_id, status="partial")
 
@@ -684,6 +700,8 @@ class CoinbaseClient:
                     self._live_port.update_buy(symbol, qty_f, px_f)
                     log.info("maker_buy_filled", symbol=symbol, qty=round(qty_f, 8),
                              price=round(px_f, 6), order_id=order_id, waited_s=waited)
+                    _obs.record_fill(symbol, "buy", qty_f, px_f, estimated=(not ap),
+                                     order_id=order_id)
                     return Order(symbol=symbol, side="buy", qty=qty_f, price=px_f,
                                  order_id=order_id, status="filled")
                 if status in ("CANCELLED", "EXPIRED", "FAILED", "REJECTED"):
@@ -699,6 +717,8 @@ class CoinbaseClient:
                 qty_f, px_f = (fq or base_size), (ap or limit_price)
                 self._live_port.update_buy(symbol, qty_f, px_f)
                 log.info("maker_buy_filled_late", symbol=symbol, order_id=order_id)
+                _obs.record_fill(symbol, "buy", qty_f, px_f, estimated=(not ap),
+                                 order_id=order_id)
                 return Order(symbol=symbol, side="buy", qty=qty_f, price=px_f,
                              order_id=order_id, status="filled")
             if (fq or 0.0) > 0:
@@ -806,6 +826,7 @@ class CoinbaseClient:
             log.warning("snapshot_degraded_using_last_good",
                         n_balances=len(balances),
                         last_total=round(self._last_good_snapshot.get("total_usdc", 0.0), 2))
+            _obs.record_snapshot_degraded(len(balances))
             return self._last_good_snapshot
 
         # Construire les positions depuis les soldes reels
@@ -826,8 +847,15 @@ class CoinbaseClient:
                 if n >= 2 and symbol in self._live_port.positions:
                     del self._live_port.positions[symbol]
                     self._zero_reads.pop(symbol, None)
+                    _obs.record_phantom_purge(symbol)
                 continue
             self._zero_reads.pop(symbol, None)   # solde revenu -> reset compteur
+
+            # Fidelite interne<->broker : si le suivi local s'ecarte du solde reel
+            # au-dela du bruit d'arrondi (>0.5%), on le rend VISIBLE avant de resync.
+            _prev_qty = local_pos.get("qty")
+            if _prev_qty and abs(real_qty - _prev_qty) > max(1e-9, 0.005 * _prev_qty):
+                _obs.record_divergence(symbol, _prev_qty, real_qty)
 
             # Sync quantite reelle (Coinbase fait foi)
             local_pos["qty"] = real_qty

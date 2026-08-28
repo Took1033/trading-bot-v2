@@ -109,6 +109,48 @@ def test_recent_bounded() -> None:
     check("recent garde les plus récents", rec[-1]["reason"] == "e19")
 
 
+def test_integration_live_order_wires_observer() -> None:
+    print("\n[7] intégration : _live_order alimente la boîte noire (câblage réel)")
+    import asyncio
+
+    from interfaces import coinbase_client as cc
+    from interfaces.coinbase_client import CoinbaseClient
+
+    class Lvl:
+        def __init__(self, p): self.price = str(p)
+    class PB:
+        def __init__(self, b, a): self.bids = [Lvl(b)]; self.asks = [Lvl(a)]
+    class BB:
+        def __init__(self, b, a): self.pricebooks = [PB(b, a)]
+    class Res:
+        def __init__(self): self.success = True; self.order_id = "oid-int"; self.error_response = {}
+    class OrderObj:
+        def __init__(self, fq, ap): self.status = "FILLED"; self.filled_size = fq; self.average_filled_price = ap
+    class GetResp:
+        def __init__(self, o): self.order = o
+    class FakeClient:
+        def __init__(self, fq, ap): self.fq = fq; self.ap = ap
+        def get_best_bid_ask(self, product_ids=None): return BB(60000, 60020)
+        def create_order(self, **k): return Res()
+        def get_order(self, order_id=None): return GetResp(OrderObj(self.fq, self.ap))
+
+    obs.reset()
+    poll_orig = cc.MAKER_POLL_S
+    cc.MAKER_POLL_S = 0.01   # borne le polling maker -> test rapide et déterministe
+    try:
+        c = CoinbaseClient(); c.mode = "live"
+        c._real_client = FakeClient(0.0009, 60050.0)   # fill réel connu, aucun réseau
+        asyncio.run(c._live_order("BTC-USDC", "buy", 0.001, force=False))
+    finally:
+        cc.MAKER_POLL_S = poll_orig
+
+    snap = obs.snapshot()
+    lf = snap.get("last_fill") or {}
+    check("un fill enregistré via _live_order", snap["counters"].get("fill", 0) >= 1)
+    check("last_fill = BTC-USDC", lf.get("symbol") == "BTC-USDC")
+    check("fill réel (non estimé)", lf.get("estimated") is False)
+
+
 def main() -> int:
     print("=== test_exec_observer : boîte noire d'exécution ===")
     test_counters_and_last()
@@ -117,6 +159,7 @@ def main() -> int:
     test_jsonl_persisted()
     test_safety_never_raises()
     test_recent_bounded()
+    test_integration_live_order_wires_observer()
 
     print("\n" + "=" * 50)
     if _failures:
