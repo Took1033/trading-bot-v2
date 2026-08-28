@@ -1947,10 +1947,16 @@ async def handle_health(request: web.Request) -> web.Response:
         pass
 
     import app_auth
+    try:
+        import push_manager
+        push_subs = push_manager.subscriber_count()
+    except Exception:
+        push_subs = None
     paused = sorted(k for k, v in trading_state.get_all_paused().items() if v)
     return web.json_response({
         "mode":               MODE,
         "auth_enabled":       app_auth.is_enabled(),
+        "push_subscribers":   push_subs,
         "kill_switch_active": trading_state.is_kill_switch_active(),
         "kill_reason":        trading_state.get_kill_reason(),
         "kill_since":         trading_state.get_kill_since(),

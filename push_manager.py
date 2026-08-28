@@ -104,6 +104,11 @@ def has_subscribers() -> bool:
     return bool(_load_subs())
 
 
+def subscriber_count() -> int:
+    """Nombre d'abonnements push enregistres (pour /api/health -> diagnostic)."""
+    return len(_load_subs())
+
+
 # ── Preferences par categorie (P5) ───────────────────────────────────────────
 
 def get_prefs() -> dict:
@@ -200,4 +205,6 @@ def send(title: str, body: str = "", url: str = "/app", category: str | None = N
     if dead:
         _save_subs([s for s in subs if s.get("endpoint") not in dead])
         log.info("push_subs_pruned", removed=len(dead))
+    # Trace de chaque envoi -> rend le push OBSERVABLE (ok=0 avec subscribers>0 = probleme).
+    log.info("push_sent", ok=ok, subscribers=len(subs), pruned=len(dead), category=cat)
     return ok

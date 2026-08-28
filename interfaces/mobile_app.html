@@ -1134,7 +1134,7 @@ async function renderNotif(){
   try{
     const reg=await navigator.serviceWorker.getRegistration('/app');
     const sub=reg?await reg.pushManager.getSubscription():null;
-    if(Notification.permission==='granted'&&sub){lbl.textContent='Activées sur cet appareil';st.textContent='ON';st.className='pv on';wrap.innerHTML='<button class="btn" id="notif-test">Envoyer une notif de test</button>';$('notif-test').onclick=testNotif;renderNotifPrefs();}
+    if(Notification.permission==='granted'&&sub){const nsub=(HEALTH&&HEALTH.push_subscribers);lbl.textContent='Activées · '+(nsub!=null?nsub+' appareil(s) abonné(s)':'sur cet appareil');st.textContent='ON';st.className='pv on';wrap.innerHTML='<button class="btn" id="notif-test">Envoyer une notif de test</button>';$('notif-test').onclick=testNotif;renderNotifPrefs();}
     else{lbl.textContent='Recevoir les alertes ici';st.textContent='OFF';st.className='pv off';wrap.innerHTML='<button class="btn pos" id="notif-on">Activer les notifications</button>';$('notif-on').onclick=enableNotif;$('notif-prefs').innerHTML='';}
   }catch(e){lbl.textContent='Notifications';st.textContent='—';wrap.innerHTML='';$('notif-prefs').innerHTML='';}
 }
