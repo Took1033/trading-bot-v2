@@ -55,7 +55,9 @@ def compute_sharpe(equity: list[float], periods_per_year: float | None = None) -
             rets.append((equity[i] - prev) / prev)
     if len(rets) < 2:
         return 0.0
-    sd = statistics.pstdev(rets)
+    # Ecart-type d'ECHANTILLON (stdev, /N-1), pas de population (pstdev, /N) : un
+    # rapport de preuve ne doit pas biaiser le Sharpe a la hausse de sqrt(N/(N-1)).
+    sd = statistics.stdev(rets)
     if sd <= 0:
         return 0.0
     sharpe = statistics.fmean(rets) / sd
