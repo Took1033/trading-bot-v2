@@ -1952,6 +1952,14 @@ async def handle_health(request: web.Request) -> web.Response:
         push_subs = push_manager.subscriber_count()
     except Exception:
         push_subs = None
+
+    # Boite noire d'execution (Axe 2) : fidelite bot<->broker. Lecture seule, defensif.
+    try:
+        import exec_observer
+        exec_state = exec_observer.snapshot()
+    except Exception:
+        exec_state = None
+
     paused = sorted(k for k, v in trading_state.get_all_paused().items() if v)
     return web.json_response({
         "mode":               MODE,
@@ -1967,6 +1975,24 @@ async def handle_health(request: web.Request) -> web.Response:
         "fear_greed_label":   director._fg_label if director else "—",
         "last_decision_ts":   last_dec_ts,
         "preflight":          preflight,
+        "exec":               exec_state,
+    })
+
+
+async def handle_exec(request: web.Request) -> web.Response:
+    """Journal d'execution recent (boite noire, Axe 2) : intention -> fill reel ->
+    reconciliation. Lecture seule. ?n=NN limite le nombre d'evenements (defaut 50)."""
+    try:
+        import exec_observer
+    except Exception:
+        return web.json_response({"summary": None, "events": []})
+    try:
+        n = max(1, min(200, int(request.query.get("n", "50"))))
+    except Exception:
+        n = 50
+    return web.json_response({
+        "summary": exec_observer.snapshot(),
+        "events":  exec_observer.recent(n),
     })
 
 
@@ -2776,6 +2802,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/daily",               handle_daily)
     app.router.add_get("/api/director",            handle_director)
     app.router.add_get("/api/health",              handle_health)
+    app.router.add_get("/api/exec",                handle_exec)
     app.router.add_get("/api/decisions",           handle_decisions)
     app.router.add_get("/api/history",             handle_history)
     app.router.add_get("/api/pnl_curve",            handle_pnl_curve)
