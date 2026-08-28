@@ -22,6 +22,7 @@ Usage rapide :
 from __future__ import annotations
 
 import asyncio
+import statistics
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -36,6 +37,46 @@ MAX_POSITION_PCT = 0.02    # 2 % du capital par trade
 MIN_CONFIDENCE   = 0.55    # 55 %
 MIN_USDC_TRADE   = 10.0    # 10 USDC minimum
 EMA_WARMUP       = 22      # points nécessaires pour les EMAs
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Métriques standard (fonctions PURES : testables sans réseau ni stratégie)
+# Ce sont les chiffres qui "prouvent" un edge de façon comparable entre stratégies.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def compute_sharpe(equity: list[float], periods_per_year: float | None = None) -> float:
+    """Sharpe des rendements pas-à-pas de la courbe d'équité. Annualisé si
+    `periods_per_year` est fourni (365 daily, 24*365 horaire). Taux sans risque
+    supposé nul (crypto, horizon court). 0.0 si trop peu de points ou variance nulle."""
+    rets: list[float] = []
+    for i in range(1, len(equity)):
+        prev = equity[i - 1]
+        if prev > 0:
+            rets.append((equity[i] - prev) / prev)
+    if len(rets) < 2:
+        return 0.0
+    sd = statistics.pstdev(rets)
+    if sd <= 0:
+        return 0.0
+    sharpe = statistics.fmean(rets) / sd
+    if periods_per_year:
+        sharpe *= periods_per_year ** 0.5
+    return round(sharpe, 3)
+
+
+def compute_profit_factor(pnls: list[float]) -> float | None:
+    """Somme des gains / |somme des pertes|. None si aucune perte (edge sans perte,
+    ratio indéfini) ; 0.0 si aucun gain."""
+    gross_win  = sum(p for p in pnls if p > 0)
+    gross_loss = -sum(p for p in pnls if p < 0)
+    if gross_loss > 0:
+        return round(gross_win / gross_loss, 2)
+    return None if gross_win > 0 else 0.0
+
+
+def compute_exposure(n_in_position: int, n_steps: int) -> float:
+    """% du temps passé en position — le risque de marché réellement encouru."""
+    return round(n_in_position / n_steps * 100, 1) if n_steps > 0 else 0.0
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -61,6 +102,11 @@ class BacktestResult:
     n_wins:       int          # trades profitables
     win_rate:     float        # %
     max_drawdown: float        # %
+    sharpe:        float = 0.0          # Sharpe (annualisé si periods_per_year fourni)
+    profit_factor: float | None = None  # gains/pertes (None = aucune perte)
+    exposure:      float = 0.0          # % du temps en position
+    avg_win:       float = 0.0          # P&L moyen des trades gagnants (USDC)
+    avg_loss:      float = 0.0          # P&L moyen des trades perdants (USDC)
     trades:       list[Trade] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -75,6 +121,10 @@ class BacktestResult:
             f"  Trades fermés   : {self.n_trades:>12}",
             f"  Gagnants        : {self.n_wins:>12} ({self.win_rate:.1f}%)",
             f"  Max drawdown    : {self.max_drawdown:>11.2f} %",
+            f"  Sharpe          : {self.sharpe:>12.3f}",
+            f"  Profit factor   : {('∞ (aucune perte)' if self.profit_factor is None else f'{self.profit_factor:>12.2f}')}",
+            f"  Exposition      : {self.exposure:>11.1f} %",
+            f"  Gain/perte moy. : {self.avg_win:>+8.2f} / {self.avg_loss:>+8.2f} USDC",
             sep,
         ]
         return "\n".join(lines)
@@ -120,10 +170,14 @@ class Backtester:
         self.initial_usdc = initial_usdc
         self.warmup       = warmup
 
-    async def run(self, symbol: str, prices: list[float]) -> BacktestResult:
+    async def run(self, symbol: str, prices: list[float],
+                  periods_per_year: float | None = None) -> BacktestResult:
         """
         Rejoue la stratégie sur `prices` (ordre chronologique, + ancien → + récent).
         Retourne un BacktestResult avec toutes les métriques.
+
+        `periods_per_year` annualise le Sharpe selon la granularité des `prices`
+        (365 pour du daily, 24*365 pour de l'horaire) ; None => Sharpe par pas.
         """
         if len(prices) < self.warmup + 1:
             raise ValueError(
@@ -138,6 +192,8 @@ class Backtester:
         peak:             float       = self.initial_usdc
 
         window: deque[float] = deque(maxlen=self.warmup + 50)
+        n_steps:  int = 0   # pas "tradables" (post-warmup)
+        n_in_pos: int = 0   # pas passés en position -> exposition
 
         for price in prices:
             window.append(price)
@@ -151,6 +207,11 @@ class Backtester:
             # Pré-chauffe
             if len(window) < self.warmup:
                 continue
+
+            # Exposition : ce pas est tradable ; on est en position si qty_held > 0.
+            n_steps += 1
+            if qty_held > 0:
+                n_in_pos += 1
 
             signal = await self.strategy(symbol, list(window))
             ts = datetime.now(timezone.utc).isoformat()
@@ -210,16 +271,26 @@ class Backtester:
             if dd > max_dd:
                 max_dd = dd
 
+        # Métriques standard (Sharpe / profit factor / exposition / moyennes)
+        pnls   = [t.pnl_usdc for t in sell_trades]
+        gains  = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p < 0]
+
         result = BacktestResult(
-            symbol       = symbol,
-            initial_usdc = self.initial_usdc,
-            final_usdc   = round(usdc, 2),
-            total_return = round(total_return, 2),
-            n_trades     = len(sell_trades),
-            n_wins       = n_wins,
-            win_rate     = round(n_wins / len(sell_trades) * 100, 1) if sell_trades else 0.0,
-            max_drawdown = round(max_dd, 2),
-            trades       = trades,
+            symbol        = symbol,
+            initial_usdc  = self.initial_usdc,
+            final_usdc    = round(usdc, 2),
+            total_return  = round(total_return, 2),
+            n_trades      = len(sell_trades),
+            n_wins        = n_wins,
+            win_rate      = round(n_wins / len(sell_trades) * 100, 1) if sell_trades else 0.0,
+            max_drawdown  = round(max_dd, 2),
+            sharpe        = compute_sharpe(portfolio_values, periods_per_year),
+            profit_factor = compute_profit_factor(pnls),
+            exposure      = compute_exposure(n_in_pos, n_steps),
+            avg_win       = round(sum(gains) / len(gains), 2) if gains else 0.0,
+            avg_loss      = round(sum(losses) / len(losses), 2) if losses else 0.0,
+            trades        = trades,
         )
 
         log.info(
