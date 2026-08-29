@@ -1,0 +1,236 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Note de décision Kairos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#0a0d13; --panel:#0f131b; --panel-2:#141a24; --panel-3:#182030;
+    --line:#1e2634; --line-2:#2b3648;
+    --ink:#e2e8f1; --muted:#8b95a7; --faint:#5b6577;
+    --pos:#28d17f; --pos-dim:rgba(40,209,127,.13); --pos-line:rgba(40,209,127,.34);
+    --neg:#ff5c5c; --neg-dim:rgba(255,92,92,.12);
+    --amber:#ffb020; --amber-dim:rgba(255,176,32,.12);
+    --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+    --sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+    font-size:15.5px; line-height:1.62; font-variant-numeric:tabular-nums; -webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px; margin:0 auto; padding:0 22px}
+  .pos{color:var(--pos)} .neg{color:var(--neg)} .amb{color:var(--amber)}
+  strong{color:var(--ink); font-weight:600}
+  em{color:var(--ink); font-style:italic}
+
+  .tape{border-bottom:1px solid var(--line); background:linear-gradient(180deg,var(--panel),var(--bg));
+    font-family:var(--mono); font-size:12px; letter-spacing:.04em; color:var(--muted)}
+  .tape .wrap{display:flex; align-items:center; gap:16px; height:42px; overflow-x:auto; white-space:nowrap; max-width:760px}
+  .tape b{color:var(--amber); font-weight:600; letter-spacing:.1em}
+  .tape .dot{width:6px;height:6px;border-radius:50%;background:var(--amber);display:inline-block;box-shadow:0 0 8px var(--amber)}
+  .tape .sep{color:var(--line-2)}
+
+  header{padding:52px 0 8px}
+  .eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:.26em; text-transform:uppercase; color:var(--amber); margin:0 0 18px}
+  h1{font-family:var(--mono); font-weight:600; font-size:clamp(26px,4.6vw,40px); line-height:1.12;
+    letter-spacing:-.01em; margin:0 0 20px; text-wrap:balance}
+  h1 .q{color:var(--faint)}
+  .standfirst{font-size:17px; color:var(--muted); max-width:64ch; margin:0 0 8px}
+  .standfirst strong{color:var(--ink)}
+
+  section{padding:30px 0; border-top:1px solid var(--line); margin-top:30px}
+  h2{font-family:var(--mono); font-weight:600; font-size:20px; letter-spacing:-.01em; margin:0 0 4px; color:var(--ink)}
+  .kicker{font-family:var(--mono); font-size:11.5px; letter-spacing:.22em; text-transform:uppercase; color:var(--amber); margin:0 0 14px}
+  p{margin:0 0 15px; max-width:68ch}
+  .lead{font-size:16px}
+
+  .callout{border:1px solid var(--line-2); border-left:3px solid var(--amber); background:var(--panel);
+    padding:18px 20px; border-radius:3px; margin:20px 0}
+  .callout.pos{border-left-color:var(--pos)}
+  .callout .k{font-family:var(--mono); font-size:11.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--amber); display:block; margin-bottom:9px}
+  .callout.pos .k{color:var(--pos)}
+  .callout p{margin:0; color:var(--ink); max-width:none}
+
+  .tblwrap{overflow-x:auto; border:1px solid var(--line); border-radius:3px; background:var(--panel); margin:18px 0}
+  table{border-collapse:collapse; width:100%; min-width:520px; font-family:var(--mono); font-size:13px}
+  thead th{background:var(--panel-2); color:var(--muted); font-weight:500; text-align:right; padding:10px 12px;
+    font-size:11px; letter-spacing:.05em; text-transform:uppercase; border-bottom:1px solid var(--line-2); white-space:nowrap}
+  thead th.l{text-align:left}
+  tbody td{padding:11px 12px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap}
+  tbody td.l{text-align:left; color:var(--ink)}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr.hi td{background:linear-gradient(90deg,var(--amber-dim),transparent 70%)}
+  tbody tr.hi td:first-child{box-shadow:inset 3px 0 0 var(--amber)}
+  .cap{font-family:var(--mono); font-size:12px; color:var(--faint); margin:6px 2px 0}
+
+  .lenses{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px}
+  .lens{border:1px solid var(--line); background:var(--panel); border-radius:3px; padding:15px 17px}
+  .lens h3{font-family:var(--mono); font-size:12.5px; letter-spacing:.06em; text-transform:uppercase; margin:0 0 8px; color:var(--amber)}
+  .lens p{margin:0; font-size:13.5px; color:var(--muted); max-width:none; line-height:1.5}
+  .lens p b{color:var(--ink)}
+
+  ol.proto{counter-reset:s; list-style:none; padding:0; margin:16px 0 0}
+  ol.proto li{position:relative; padding:11px 0 11px 40px; border-bottom:1px solid var(--line); font-size:14.5px; color:var(--muted); max-width:none}
+  ol.proto li:last-child{border-bottom:0}
+  ol.proto li::before{counter-increment:s; content:counter(s); position:absolute; left:0; top:11px;
+    font-family:var(--mono); font-size:12px; color:var(--amber); border:1px solid var(--line-2); border-radius:2px; width:24px; height:24px; display:grid; place-items:center}
+  ol.proto li b{color:var(--ink)}
+
+  .decision{border:1px solid var(--line); border-radius:3px; background:var(--panel); padding:18px 20px; margin:14px 0}
+  .decision .h{font-family:var(--mono); font-size:14px; color:var(--ink); font-weight:600; margin-bottom:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  .tag{font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; padding:3px 8px; border-radius:2px; border:1px solid}
+  .tag.hold{color:var(--amber); border-color:rgba(255,176,32,.4); background:var(--amber-dim)}
+  .tag.wait{color:var(--muted); border-color:var(--line-2); background:var(--panel-3)}
+  .decision .row{display:grid; grid-template-columns:auto 1fr; gap:10px 14px; font-size:14px}
+  .decision .lbl{font-family:var(--mono); font-size:11.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--faint); padding-top:2px}
+  .decision .val{color:var(--muted)} .decision .val b{color:var(--ink)}
+
+  footer{border-top:1px solid var(--line); margin-top:36px; padding:28px 0 50px}
+  .disc{font-family:var(--mono); font-size:12.5px; color:var(--muted); line-height:1.8; border-left:2px solid var(--amber); padding-left:14px; max-width:none}
+  .disc b{color:var(--ink)}
+  .tools{font-family:var(--mono); font-size:12px; color:var(--faint); margin-top:18px}
+  .tools b{color:var(--muted)}
+
+  @media (max-width:640px){ .lenses{grid-template-columns:1fr} .decision .row{grid-template-columns:1fr} body{font-size:14.5px} }
+</style>
+
+<div class="tape"><div class="wrap">
+  <span><span class="dot"></span> KAIROS</span>
+  <span class="sep">/</span><span>NOTE DE DÉCISION</span>
+  <span class="sep">/</span><span>post-preuve-d'edge</span>
+  <span class="sep">/</span><span>4 lentilles</span>
+  <span class="sep">/</span><b>2026-08-29</b>
+</div></div>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">Aide à la décision · pas conseil d'investissement</p>
+  <h1>Activer 1&nbsp;%&nbsp;? Couper 4 bots&nbsp;? <span class="q">La bonne question est ailleurs.</span></h1>
+  <p class="standfirst">Quatre analyses indépendantes (quant, risque, commercial, red-team) convergent : la preuve d'edge répondait à une question <strong>mal posée</strong>. Elle mesure l'alpha d'un signal actif par actif ; le produit live est un <strong>book</strong> — un swarm de 5 bots plafonné à 6&nbsp;% d'exposition, <strong>~94&nbsp;% en cash</strong>. Avant de décider, il fallait mesurer ce qui tourne vraiment. On l'a fait.</p>
+</header>
+
+<section style="border-top:none; margin-top:8px">
+  <p class="kicker">Le recadrage</p>
+  <h2>Le book n'est pas le backtest</h2>
+  <p class="lead">Les chiffres spectaculaires du rapport (+71&nbsp;%, +148&nbsp;%…) sont à <strong>100&nbsp;% d'exposition, un actif isolé</strong>. Ramenés à l'échelle du book (positions ~3&nbsp;%, cap 6&nbsp;%), les drawdowns « effrayants » deviennent des impacts modestes :</p>
+  <div class="tblwrap"><table>
+    <thead><tr><th class="l">Métrique rapport (single-asset all-in)</th><th>Réalité du book (cap 6&nbsp;%)</th></tr></thead>
+    <tbody>
+      <tr><td class="l">MaxDD BTC ~60&nbsp;%</td><td class="neg">−1,8&nbsp;% du NAV</td></tr>
+      <tr><td class="l">MaxDD SOL en hold ~96&nbsp;%</td><td class="neg">−2,9&nbsp;% du NAV</td></tr>
+      <tr><td class="l">Book crypto plein (6&nbsp;%) à −60&nbsp;%</td><td class="neg">−3,6&nbsp;% du NAV</td></tr>
+      <tr><td class="l">Exposition marché maximale (~200&nbsp;USDC)</td><td><b>~12&nbsp;USDC</b></td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>« Fragile » veut dire <em>edge incertain</em>, pas <em>perte probable</em>.</strong> Ces décisions sont à faible enjeu en capital et réversibles. L'enjeu réel est épistémique et opérationnel — pas la ruine. Le vrai diversifiant du book, ce n'est pas coin-vs-coin : c'est <strong>crypto-vs-cash</strong>.</p>
+</section>
+
+<section>
+  <p class="kicker">L'objet réel · le book déployé</p>
+  <h2>À budget de risque égal : étaler ou concentrer&nbsp;?</h2>
+  <p>Nouveau backtest (<span class="amb">run_backtest_portfolio.py</span>) : les 5 actifs rejoués en lockstep, cash + cap + rationnement coordonnés, exécution barre-suivante. La question de Q2, enfin posée sur le bon objet — <strong>concentrer les 6&nbsp;% sur BTC, ou les étaler sur le swarm&nbsp;?</strong></p>
+  <div class="tblwrap"><table>
+    <thead><tr><th class="l">Config (5 ans, cap 6&nbsp;%, flip strict)</th><th>Rendt</th><th>CAGR</th><th>Sharpe</th><th>MaxDD</th></tr></thead>
+    <tbody>
+      <tr class="hi"><td class="l">SWARM-5 · étaler</td><td class="pos">+7,9&nbsp;%</td><td class="pos">+1,5&nbsp;%</td><td>0,45</td><td class="neg">6,5&nbsp;%</td></tr>
+      <tr><td class="l">BTC concentré · 6&nbsp;%</td><td class="pos">+6,0&nbsp;%</td><td class="pos">+1,2&nbsp;%</td><td><b>0,51</b></td><td><b>5,0&nbsp;%</b></td></tr>
+      <tr><td class="l">Hold BTC 6&nbsp;% (passif)</td><td>+1,1&nbsp;%</td><td>+0,2&nbsp;%</td><td>0,10</td><td>5,7&nbsp;%</td></tr>
+      <tr><td class="l">Cash 100&nbsp;%</td><td>0,0&nbsp;%</td><td>0,0&nbsp;%</td><td>0,00</td><td>0,0&nbsp;%</td></tr>
+    </tbody>
+  </table><p class="cap">168 entrées pour le swarm vs 54 pour BTC concentré.</p></div>
+  <p>Trois vérités que le single-asset cachait :</p>
+  <p>① <strong>Le book fait ~+1,5&nbsp;% de CAGR, pas +71&nbsp;%.</strong> Dominé par les 94&nbsp;% de cash. C'est le chiffre honnête d'une page <span class="amb">/track</span>.<br>
+  ② <strong>Swarm vs BTC-concentré = vrai arbitrage, aucun ne domine.</strong> Le swarm gagne en rendement (+7,9 vs +6,0) mais perd en Sharpe (0,45 vs 0,51), en drawdown (6,5 vs 5,0&nbsp;%) et trade 3× plus. Les alts ajoutent du rendement brut, dégradent la qualité risque-ajustée.<br>
+  ③ <strong>Les deux battent le hold passif ~5× en Sharpe</strong> (0,45–0,51 vs 0,10). Le signal trend gagne son pain.</p>
+  <div class="callout"><span class="k">La conséquence pour Q2</span><p>« Couper les 4 alts » n'est <strong>pas un slam-dunk</strong> : à budget de risque égal, l'arbitrage étaler/concentrer est réel et non tranché. Et le cap neutralise déjà « combien de bots » (quand tout signale, ~2 positions consomment les 6&nbsp;%). La vraie question n'est pas <em>combien de bots</em> — c'est <strong>quelle politique de risque par niveau de preuve</strong>.</p></div>
+</section>
+
+<section>
+  <p class="kicker">La bande 1&nbsp;% au banc d'essai</p>
+  <h2>Elle ne survit pas proprement hors échantillon</h2>
+  <p>Le « +22&nbsp;pts » de l'exit-1&nbsp;% avait été choisi par <strong>argmax in-sample</strong> (grille de 7 valeurs sur les mêmes 5 ans) — l'ironie exacte que le walk-forward combat. Le test honnête (<span class="amb">run_backtest_band_walkforward.py</span>) sélectionne la bande sur le passé, l'applique au futur :</p>
+  <div class="tblwrap"><table>
+    <thead><tr><th class="l">Actif</th><th>OOS bande adaptative</th><th>OOS flip strict</th><th>Fenêtres gagnées</th></tr></thead>
+    <tbody>
+      <tr><td class="l">BTC</td><td class="pos">+256&nbsp;%</td><td>+227&nbsp;%</td><td>2/5</td></tr>
+      <tr><td class="l">ETH</td><td>+118&nbsp;%</td><td>+118&nbsp;%</td><td class="muted">0/5 (choisit 0&nbsp;%)</td></tr>
+      <tr><td class="l">SOL</td><td class="pos">+324&nbsp;%</td><td>+209&nbsp;%</td><td class="pos">5/5</td></tr>
+      <tr><td class="l">XRP</td><td class="neg">+182&nbsp;%</td><td>+221&nbsp;%</td><td class="neg">1/5</td></tr>
+      <tr><td class="l">DOGE</td><td class="pos">+130&nbsp;%</td><td>+86&nbsp;%</td><td class="pos">4/5</td></tr>
+      <tr class="hi"><td class="l"><b>Agrégat</b></td><td class="pos">+1010&nbsp;%</td><td>+861&nbsp;%</td><td class="amb">12/25</td></tr>
+    </tbody>
+  </table></div>
+  <p>Le composé adaptatif est plus haut (+149&nbsp;pts), <strong>mais la bande ne gagne que 12&nbsp;fenêtres sur 25</strong> — son avantage est <em>lui-même concentré</em> sur quelques périodes, exactement la fragilité qu'on reproche à la stratégie. <strong>Verdict : le flip-strict reste le défaut défendable ; la bande est un candidat, pas une amélioration prouvée.</strong> Le « +22&nbsp;pts » n'est pas un edge OOS fiable.</p>
+</section>
+
+<section>
+  <p class="kicker">Les deux décisions</p>
+  <h2>Ce que la preuve dit, ce qu'il manque</h2>
+
+  <div class="decision">
+    <div class="h">Bande de sortie 1&nbsp;% <span class="tag wait">candidat, non prouvé</span></div>
+    <div class="row">
+      <div class="lbl">La preuve</div><div class="val">Mécanisme sain (moins de whipsaw), mais <b>ne bat pas le flip-strict OOS</b> (12/25). Le +22&nbsp;pts est in-sample.</div>
+      <div class="lbl">Il manque</div><div class="val">Un <b>plateau OOS clair</b> (le voisinage améliore aussi). En l'état : flip-strict est le défaut.</div>
+    </div>
+  </div>
+
+  <div class="decision">
+    <div class="h">Couper les 4 alts non-prouvés <span class="tag wait">acte quasi-irréversible</span></div>
+    <div class="row">
+      <div class="lbl">La preuve</div><div class="val">« Non prouvé » ≠ « perdant ». Au niveau book, swarm vs BTC-concentré = <b>vrai arbitrage</b>, aucun ne domine. Le verdict per-actif est <b>instable</b> (ETH champion en juin, fragile en août).</div>
+      <div class="lbl">Il manque</div><div class="val">Une décision de <b>politique de risque par niveau de preuve</b> (sizing différencié, filtre de régime) — pas sur le <em>nombre</em> de bots. Et plus de recul <b>live</b>.</div>
+    </div>
+  </div>
+
+  <div class="decision">
+    <div class="h">Le cap / le sizing <span class="tag hold">la vraie variable, non testée</span></div>
+    <div class="row">
+      <div class="lbl">La preuve</div><div class="val">Le rapport optimise le <em>signal</em> ; le book est dominé par le <b>cap 6&nbsp;%</b> — jamais backtesté. C'est <em>là</em> qu'est le vrai levier de risque.</div>
+      <div class="lbl">Il manque</div><div class="val">Balayer le cap dans le backtest portefeuille ; <b>confirmer d'abord les valeurs LIVE réelles</b> (.env gitignoré).</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <p class="kicker">Ce que chaque lentille a apporté</p>
+  <h2>Quatre angles qui se tendent</h2>
+  <div class="lenses">
+    <div class="lens"><h3>Quant · épistémique</h3><p><b>Absence de preuve ≠ preuve d'absence.</b> Même le Sharpe de BTC n'est pas distinguable de zéro sur 5&nbsp;ans (IC≈[−0,4;1,4]). La « concentration » est la <b>signature naturelle du trend</b>, pas un défaut — la métrique le pénalise à tort.</p></div>
+    <div class="lens"><h3>Risque · portefeuille</h3><p>Le book ≠ le backtest. Les DD de 60&nbsp;% deviennent 2–4&nbsp;% du NAV. Le vrai diversifiant est le <b>cash</b>. La question n'est pas « combien de bots » (le cap la neutralise) mais <b>quelle politique de risque par niveau de preuve</b>.</p></div>
+    <div class="lens"><h3>Commercial · produit</h3><p><b>Le taux d'échec des stratégies EST le taux de réussite de la méthode.</b> Une gate qui recale 4/5 bots, ton plus gros gagnant compris, est crédible <em>parce qu'elle mord son propriétaire</em>. Tu vends de l'épistémique, pas de l'alpha.</p></div>
+    <div class="lens"><h3>Red-team · avocat du diable</h3><p>L'exit-1&nbsp;% est un argmax in-sample. Le verdict a <b>déjà basculé</b> (ETH champion en juin, fragile en août). Survivorship des alts. La flotte est le <b>fossile d'un filtre faible</b>. « A-t-on mesuré le bon objet&nbsp;? Pas encore. »</p></div>
+  </div>
+</section>
+
+<section>
+  <p class="kicker">Le protocole · le livrable durable</p>
+  <h2>7 conditions avant tout changement de paramètre live</h2>
+  <p>Codifié dans <span class="amb">GOVERNANCE.md</span> — pour qu'un chiffre qui « a l'air mieux » sur l'historique ne devienne jamais un changement en capital réel sans preuve.</p>
+  <ol class="proto">
+    <li><b>Hypothèse pré-déclarée</b> — le mécanisme attendu, écrit <em>avant</em> de voir les résultats.</li>
+    <li><b>Validation hors échantillon</b> — walk-forward avec re-sélection, jamais un argmax in-sample.</li>
+    <li><b>Le bon objet</b> — un changement de book se valide sur le backtest portefeuille, pas single-asset.</li>
+    <li><b>Horizon et seuil déclarés</b> — combien de temps, quel critère d'échec, écrits d'avance.</li>
+    <li><b>Un seul changement à la fois</b> — sinon l'effet est non attribuable.</li>
+    <li><b>Réversibilité + filet vert</b> — one-liner réversible, <span class="amb">run_tests.py</span> vert.</li>
+    <li><b>Trace immuable</b> — une décision non journalisée n'a pas eu lieu.</li>
+  </ol>
+</section>
+
+<section>
+  <p class="kicker">L'angle commercial</p>
+  <h2>Ton 1/5 est le produit</h2>
+  <p>Sous ta thèse « vendre l'ingénierie, pas les rendements », la lecture honnête <strong>force le meilleur positionnement</strong>. Tu ne peux pas vendre « la strato gagne » sur un 1/5 — mais tu peux vendre « le process est fiable », et le 1/5 <em>en est la preuve</em>. Les 4 non-prouvés ne sont pas ton passif : ce sont le <strong>groupe témoin</strong> qui donne un sens au « GO » de BTC.</p>
+  <div class="callout pos"><span class="k">Le paradoxe SOL, l'exhibit qui tue</span><p>SOL a fait le <strong>plus d'argent</strong> (+148 à +171&nbsp;%) et récolte quand même un NO-GO. Ouvrir avec <em>« notre plus gros gagnant n'est pas prouvé, et voici la raison honnête »</em> est la phrase la plus génératrice de confiance qu'une page fintech puisse afficher.</p></div>
+  <p>Deux garde-fous de récit : titrer BTC au <strong>+71&nbsp;% (flip strict)</strong>, jamais au +93,5&nbsp;% (in-sample) — sinon tu blesses ton propre flagship. Et tenir <strong>preuve = live = page</strong> : ce que tu prouves doit être ce que tu tournes.</p>
+  <p class="lead"><strong>Ton flagship, ce n'est pas BTC. C'est la gate qui a osé recaler BTC quatre fois autour.</strong></p>
+</section>
+
+<footer>
+  <p class="disc"><b>La recommandation est de méthode, pas d'acte.</b> Ne tranche ni Q1 ni Q2 maintenant : les deux se dissolvent dans « on avait mesuré le mauvais objet ». Les deux backtests manquants sont faits ; il reste à décider — quand tu voudras, à tête reposée — la <b>politique de risque par niveau de preuve</b>, et à ne bouger un paramètre live que derrière le protocole. Tout changement envisagé est <b>réversible et n'élargit pas l'exposition</b> : une expérience monitorée, jamais un pari.</p>
+  <p class="disc" style="margin-top:14px; border-left-color:var(--line-2)">Cette note est une aide à la décision. Elle n'émet aucune recommandation d'achat, de vente, d'allocation, ni d'action sur le compte réel. La décision et tout acte de trading appartiennent à Brice.</p>
+  <p class="tools"><b>Outils de référence</b> · edge_report.py (single-asset) · run_backtest_portfolio.py (book) · run_backtest_band_walkforward.py (validation OOS) · GOVERNANCE.md (protocole) — 2026-08-29</p>
+</footer>
+</div>

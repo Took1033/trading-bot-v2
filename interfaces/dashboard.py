@@ -2603,6 +2603,10 @@ async def handle_config(request: web.Request) -> web.Response:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _APP_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mobile_app.html")
+# Pages de preuve/decision (a la racine du repo, servies statiquement depuis l'appli).
+_REPO_ROOT      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_TRACK_HTML_PATH = os.path.join(_REPO_ROOT, "track_edge.html")
+_MEMO_HTML_PATH  = os.path.join(_REPO_ROOT, "decision_memo.html")
 
 _APP_ICON_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">'
@@ -2643,6 +2647,27 @@ async def handle_app(request: web.Request) -> web.Response:
         return web.Response(status=404, text="appli introuvable (interfaces/mobile_app.html)")
     return web.Response(text=html, content_type="text/html", charset="utf-8",
                         headers={"Cache-Control": "no-cache"})
+
+
+def _serve_static_html(path: str, missing: str) -> web.Response:
+    """Sert une page HTML autonome (preuve/decision). Lecture seule, aucun effet de bord."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            html = f.read()
+    except Exception:
+        return web.Response(status=404, text=missing)
+    return web.Response(text=html, content_type="text/html", charset="utf-8",
+                        headers={"Cache-Control": "no-cache"})
+
+
+async def handle_track(request: web.Request) -> web.Response:
+    """Carte d'identite de l'edge (preuve reproductible) — base de la future page /track."""
+    return _serve_static_html(_TRACK_HTML_PATH, "track_edge.html introuvable (racine du repo)")
+
+
+async def handle_notes(request: web.Request) -> web.Response:
+    """Note de decision strategique (synthese des 4 lentilles)."""
+    return _serve_static_html(_MEMO_HTML_PATH, "decision_memo.html introuvable (racine du repo)")
 
 
 async def handle_app_manifest(request: web.Request) -> web.Response:
@@ -2750,7 +2775,8 @@ async def handle_login(request: web.Request) -> web.Response:
 # Chemins accessibles SANS jeton : la coquille HTML (qui n'affiche aucune donnee avant
 # de fetch /api/*), les assets PWA, la cle VAPID publique, et le login lui-meme.
 _PUBLIC_GET = {"/", "/app", "/app/manifest.webmanifest", "/app/icon.svg",
-               "/app/sw.js", "/app/push/key"}
+               "/app/sw.js", "/app/push/key",
+               "/track", "/notes"}   # pages statiques de preuve/decision (aucune donnee live)
 
 
 def _is_public(request: web.Request) -> bool:
@@ -2785,6 +2811,9 @@ def build_app() -> web.Application:
     app.router.add_get("/",                        handle_index)
     app.router.add_post("/app/login",              handle_login)
     app.router.add_get("/bot/{bot_id}",            handle_bot_page)
+    # Pages de preuve/decision (statiques, servies dans le tailnet)
+    app.router.add_get("/track",                   handle_track)
+    app.router.add_get("/notes",                   handle_notes)
     # Appli mobile PWA (acces prive via Tailscale)
     app.router.add_get("/app",                     handle_app)
     app.router.add_get("/app/manifest.webmanifest", handle_app_manifest)
