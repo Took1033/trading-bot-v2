@@ -489,7 +489,8 @@ def detect_gaps(ts: list[int]) -> list[dict]:
 # Analyse d'un symbole
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def analyze_symbol(symbol_live: str, days: int) -> dict:
+async def analyze_symbol(symbol_live: str, days: int,
+                         entry_buf: float = ENTRY_BUF, exit_buf: float = EXIT_BUF) -> dict:
     symbol_data = symbol_live.replace("USDC", "USD")   # historique daily = -USD
     candles = await fetch_daily(symbol_data, days)
     ts = [c[0] for c in candles]
@@ -520,7 +521,7 @@ async def analyze_symbol(symbol_live: str, days: int) -> dict:
     ref_metrics = None
     ref_bh = None
     for label, fee in FEE_SCENARIOS:
-        sim = simulate(closes, SMA_PERIOD, fee, ENTRY_BUF, EXIT_BUF)
+        sim = simulate(closes, SMA_PERIOD, fee, entry_buf, exit_buf)
         m = full_metrics(sim, closes, ts, warmup, ppy)
         bh = buy_hold(closes, warmup, fee, ppy)
         fee_sensitivity.append({
@@ -533,11 +534,11 @@ async def analyze_symbol(symbol_live: str, days: int) -> dict:
             ref_bh = bh
 
     if ref_metrics is None:   # securite
-        sim = simulate(closes, SMA_PERIOD, REFERENCE_FEE, ENTRY_BUF, EXIT_BUF)
+        sim = simulate(closes, SMA_PERIOD, REFERENCE_FEE, entry_buf, exit_buf)
         ref_metrics = full_metrics(sim, closes, ts, warmup, ppy)
         ref_bh = buy_hold(closes, warmup, REFERENCE_FEE, ppy)
 
-    wf = walk_forward(closes, K_WINDOWS, SMA_PERIOD, REFERENCE_FEE, ENTRY_BUF, EXIT_BUF)
+    wf = walk_forward(closes, K_WINDOWS, SMA_PERIOD, REFERENCE_FEE, entry_buf, exit_buf)
 
     base.update({
         "span_days": round(span_days, 1),
@@ -565,14 +566,15 @@ def _git_head() -> str:
         return "unknown"
 
 
-async def build_report(symbols: list[str], days: int) -> dict:
+async def build_report(symbols: list[str], days: int,
+                       entry_buf: float = ENTRY_BUF, exit_buf: float = EXIT_BUF) -> dict:
     results = []
     for sym in symbols:
-        results.append(await analyze_symbol(sym, days))
+        results.append(await analyze_symbol(sym, days, entry_buf, exit_buf))
         await asyncio.sleep(0.35)   # anti-429 entre symboles
 
     params = {
-        "sma_period": SMA_PERIOD, "entry_buffer_pct": ENTRY_BUF, "exit_buffer_pct": EXIT_BUF,
+        "sma_period": SMA_PERIOD, "entry_buffer_pct": entry_buf, "exit_buffer_pct": exit_buf,
         "granularity": GRANULARITY, "warmup": SMA_PERIOD, "initial_usdc": INITIAL,
         "reference_fee_rt": REFERENCE_FEE, "fee_scenarios": [f for _, f in FEE_SCENARIOS],
         "k_windows": K_WINDOWS, "execution": "next_bar", "risk_free_annual": 0.0,
@@ -688,11 +690,15 @@ def main() -> int:
     ap.add_argument("--symbols", default=",".join(LIVE_FLEET),
                     help="liste -USDC separee par des virgules (defaut = fleet live)")
     ap.add_argument("--days", type=int, default=1825, help="profondeur d'historique (defaut 5 ans)")
+    ap.add_argument("--exit-buffer", type=float, default=EXIT_BUF,
+                    help="bande d'hysteresis de SORTIE en %% (defaut 0 = flip strict ; ~1 = calibre)")
+    ap.add_argument("--entry-buffer", type=float, default=ENTRY_BUF,
+                    help="bande d'hysteresis d'ENTREE en %% (defaut 0)")
     ap.add_argument("--out", default="", help="chemin du JSON de sortie (optionnel)")
     args = ap.parse_args()
 
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
-    report = asyncio.run(build_report(symbols, args.days))
+    report = asyncio.run(build_report(symbols, args.days, args.entry_buffer, args.exit_buffer))
 
     print(render_text(report))
     if args.out:

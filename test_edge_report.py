@@ -152,6 +152,15 @@ def test_gate_logic() -> None:
     check("la raison est explicite", any("buy&hold" in r for r in g["reasons"]))
 
 
+def test_hysteresis_reduces_whipsaw() -> None:
+    print("\n[9] hysteresis : une bande de sortie plus large tient plus longtemps")
+    closes = synth(500)
+    strict = er.simulate(closes, 50, 0.002, 0.0, 0.0)["n_trades"]
+    wide   = er.simulate(closes, 50, 0.002, 0.0, 2.0)["n_trades"]
+    check("des trades en flip strict", strict > 0)
+    check("bande de sortie 2% => moins (ou autant) de round-trips", wide <= strict)
+
+
 def test_report_reproducible() -> None:
     print("\n[8] empreinte : deterministe sur les memes closes")
     a = er.sha256_floats([1.0, 2.0, 3.0])
@@ -170,6 +179,7 @@ def main() -> int:
     test_buy_hold_fair()
     test_walk_forward()
     test_gate_logic()
+    test_hysteresis_reduces_whipsaw()
     test_report_reproducible()
 
     print("\n" + "=" * 52)
