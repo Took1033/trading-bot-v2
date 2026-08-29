@@ -1,0 +1,422 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preuve d'edge Kairos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    /* Terminal de trading — engagement mono-theme sombre (instrument financier). */
+    --bg:#0a0d13; --panel:#0f131b; --panel-2:#141a24; --panel-3:#182030;
+    --line:#1e2634; --line-2:#2b3648;
+    --ink:#e2e8f1; --muted:#8b95a7; --faint:#5b6577;
+    --pos:#28d17f; --pos-dim:rgba(40,209,127,.14); --pos-line:rgba(40,209,127,.34);
+    --neg:#ff5c5c; --neg-dim:rgba(255,92,92,.13);
+    --amber:#ffb020; --amber-dim:rgba(255,176,32,.13);
+    --mono:'IBM Plex Mono',ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+    --sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); font-size:15px; line-height:1.55;
+    font-variant-numeric:tabular-nums; -webkit-font-smoothing:antialiased;
+  }
+  .num{font-family:var(--mono); font-variant-numeric:tabular-nums}
+  .pos{color:var(--pos)} .neg{color:var(--neg)} .amb{color:var(--amber)}
+  .wrap{max-width:1080px; margin:0 auto; padding:0 22px}
+
+  /* ── tape bar ─────────────────────────────────────────────── */
+  .tape{
+    border-bottom:1px solid var(--line); background:linear-gradient(180deg,var(--panel),var(--bg));
+    font-family:var(--mono); font-size:12px; letter-spacing:.04em; color:var(--muted);
+  }
+  .tape .wrap{display:flex; align-items:center; gap:18px; height:42px; overflow-x:auto; white-space:nowrap}
+  .tape b{color:var(--amber); font-weight:600; letter-spacing:.12em}
+  .tape .dot{width:6px;height:6px;border-radius:50%;background:var(--pos);display:inline-block;
+    box-shadow:0 0 8px var(--pos); animation:pulse 2.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .tape .sep{color:var(--line-2)}
+
+  /* ── hero ─────────────────────────────────────────────────── */
+  header.hero{padding:54px 0 30px}
+  .eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:.28em; text-transform:uppercase;
+    color:var(--amber); margin:0 0 16px}
+  h1{
+    font-family:var(--mono); font-weight:600; font-size:clamp(30px,5.4vw,54px);
+    line-height:1.04; letter-spacing:-.01em; margin:0 0 18px; text-wrap:balance; color:var(--ink);
+  }
+  h1 .q{color:var(--faint)}
+  .lede{max-width:60ch; color:var(--muted); font-size:16px; margin:0 0 30px}
+  .lede strong{color:var(--ink); font-weight:600}
+
+  .verdict-row{display:flex; flex-wrap:wrap; gap:14px; align-items:stretch; margin-top:8px}
+  .scorecard{
+    display:flex; align-items:baseline; gap:14px; padding:16px 20px;
+    border:1px solid var(--line-2); border-left:3px solid var(--amber);
+    background:var(--panel); border-radius:2px;
+  }
+  .scorecard .big{font-family:var(--mono); font-size:40px; font-weight:600; line-height:1; color:var(--ink)}
+  .scorecard .big em{color:var(--faint); font-style:normal}
+  .scorecard .cap{font-family:var(--mono); font-size:11.5px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--muted); max-width:20ch}
+  .legend{display:flex; gap:16px; align-items:center; padding:14px 18px; border:1px solid var(--line);
+    background:var(--panel); border-radius:2px; font-family:var(--mono); font-size:12px; color:var(--muted); flex-wrap:wrap}
+  .legend i{width:22px;height:0;border-top:2px solid; display:inline-block; vertical-align:middle; margin-right:7px}
+  .legend .sw{width:12px;height:12px;display:inline-block;vertical-align:middle;margin-right:7px;border-radius:2px}
+
+  /* ── chart panels ─────────────────────────────────────────── */
+  section{padding:26px 0}
+  .panel{border:1px solid var(--line); background:var(--panel); border-radius:3px; overflow:hidden}
+  .panel-hd{display:flex; justify-content:space-between; align-items:baseline; gap:12px;
+    padding:14px 18px; border-bottom:1px solid var(--line); flex-wrap:wrap}
+  .panel-hd .t{font-family:var(--mono); font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink)}
+  .panel-hd .s{font-family:var(--mono); font-size:12px; color:var(--muted)}
+  canvas{display:block; width:100%}
+  .chart-foot{display:flex; gap:20px; flex-wrap:wrap; padding:12px 18px; border-top:1px solid var(--line);
+    font-family:var(--mono); font-size:12px; color:var(--muted)}
+  .chart-foot b{color:var(--ink); font-weight:600}
+
+  .section-label{font-family:var(--mono); font-size:12px; letter-spacing:.24em; text-transform:uppercase;
+    color:var(--amber); margin:0 0 6px}
+  .section-lede{color:var(--muted); max-width:66ch; margin:0 0 20px; font-size:14.5px}
+
+  /* ── tape table ───────────────────────────────────────────── */
+  .tblwrap{overflow-x:auto; border:1px solid var(--line); border-radius:3px; background:var(--panel)}
+  table{border-collapse:collapse; width:100%; min-width:860px; font-family:var(--mono); font-size:13px}
+  thead th{position:sticky; top:0; background:var(--panel-2); color:var(--muted); font-weight:500;
+    text-align:right; padding:11px 12px; font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+    border-bottom:1px solid var(--line-2); white-space:nowrap}
+  thead th.l{text-align:left}
+  tbody td{padding:13px 12px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; color:var(--ink)}
+  tbody td.l{text-align:left}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr.proven{background:linear-gradient(90deg,var(--amber-dim),transparent 60%)}
+  tbody tr.proven td:first-child{box-shadow:inset 3px 0 0 var(--amber)}
+  .tick{font-weight:600; font-size:14px; letter-spacing:.02em}
+  .tick small{display:block; color:var(--faint); font-size:11px; font-weight:400; letter-spacing:0}
+  .pill{display:inline-block; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase;
+    padding:3px 8px; border-radius:2px; border:1px solid; font-weight:600}
+  .pill.ok{color:var(--pos); border-color:var(--pos-line); background:var(--pos-dim)}
+  .pill.no{color:var(--muted); border-color:var(--line-2); background:var(--panel-3)}
+  .pill.warn{color:var(--amber); border-color:rgba(255,176,32,.4); background:var(--amber-dim)}
+  .wf{display:inline-flex; align-items:flex-end; gap:2px; height:26px; vertical-align:middle}
+  .wf span{width:6px; display:block; border-radius:1px}
+  .muted-note{color:var(--muted)}
+  /* ── why panel ── */
+  .whyrow{border:1px solid var(--line); background:var(--panel); border-radius:3px; padding:14px 16px; margin-bottom:10px}
+  .whyhd{display:flex; align-items:center; gap:12px; margin-bottom:10px}
+  .whyhd .tick{font-size:15px}
+  .conc{position:relative; height:24px; background:var(--panel-3); border-radius:2px; overflow:hidden; border:1px solid var(--line)}
+  .concfill{position:absolute; top:0; left:0; height:100%; border-right:2px solid}
+  .conclbl{position:absolute; top:0; left:9px; height:24px; line-height:24px; font-family:var(--mono); font-size:11.5px; color:var(--ink); white-space:nowrap}
+  .whyfoot{display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:9px; font-family:var(--mono); font-size:12px}
+
+  /* ── gate / methodology ───────────────────────────────────── */
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  .crit{border:1px solid var(--line); background:var(--panel); border-radius:3px; padding:16px 18px}
+  .crit .n{font-family:var(--mono); color:var(--amber); font-size:12px; letter-spacing:.1em}
+  .crit h3{font-family:var(--mono); font-size:13.5px; margin:6px 0 6px; color:var(--ink); font-weight:600; letter-spacing:.02em}
+  .crit p{margin:0; color:var(--muted); font-size:13.5px; line-height:1.5}
+  .callout{border:1px solid var(--line-2); border-left:3px solid var(--pos); background:var(--panel);
+    padding:18px 20px; border-radius:3px; margin-top:8px}
+  .callout p{margin:0; color:var(--ink)}
+  .callout .k{font-family:var(--mono); color:var(--pos); font-size:12px; letter-spacing:.14em; text-transform:uppercase; display:block; margin-bottom:8px}
+
+  /* ── footer ───────────────────────────────────────────────── */
+  footer{border-top:1px solid var(--line); margin-top:30px; padding:30px 0 50px; color:var(--muted)}
+  .prov{font-family:var(--mono); font-size:12.5px; line-height:1.9; color:var(--muted); word-break:break-all}
+  .prov b{color:var(--ink)} .prov .amb{color:var(--amber)}
+  .thesis{font-family:var(--mono); font-size:15px; color:var(--ink); letter-spacing:.01em; margin:0 0 22px;
+    padding-left:14px; border-left:2px solid var(--amber)}
+  h2{font-family:var(--mono); font-weight:600; font-size:22px; letter-spacing:-.01em; margin:0 0 4px; color:var(--ink)}
+
+  @media (max-width:720px){
+    .grid2{grid-template-columns:1fr}
+    .scorecard .big{font-size:32px}
+    body{font-size:14px}
+  }
+  @media (prefers-reduced-motion:reduce){ .tape .dot{animation:none} *{scroll-behavior:auto} }
+</style>
+
+<div class="tape"><div class="wrap">
+  <span><span class="dot"></span> KAIROS</span>
+  <span class="sep">/</span><span>PREUVE D'EDGE</span>
+  <span class="sep">/</span><span>trend SMA50 · <b style="color:var(--amber)">hystérésis 1%</b> · long-only</span>
+  <span class="sep">/</span><span>5 ans · Coinbase</span>
+  <span class="sep">/</span><span>2026-08-28</span>
+  <span class="sep">/</span><b>1&nbsp;PROUVÉ&nbsp;/&nbsp;5</b>
+</div></div>
+
+<header class="hero"><div class="wrap">
+  <p class="eyebrow">Carte d'identité de la stratégie</p>
+  <h1>La stratégie a-t-elle un edge réel&nbsp;? <span class="q">Un seul actif dit oui.</span></h1>
+  <p class="lede">Le trend-following de Kairos, rejoué sur 5&nbsp;ans dans sa config calibrée (bande de sortie 1&nbsp;%) de données Coinbase, passé au crible d'un protocole conçu pour <strong>ne pas mentir</strong> : walk-forward, sensibilité aux frais, benchmark équitable, anti look-ahead. Verdict «&nbsp;edge prouvé&nbsp;» seulement si <strong>7&nbsp;critères</strong> passent — sinon le rapport dit pourquoi il refuse de conclure.</p>
+
+  <div class="verdict-row">
+    <div class="scorecard">
+      <div class="big">1<em>/5</em></div>
+      <div class="cap">edge robuste, net de frais, hors échantillon</div>
+    </div>
+    <div class="legend">
+      <span><i style="border-color:var(--ink)"></i>Prix BTC</span>
+      <span><i style="border-color:var(--amber)"></i>SMA&nbsp;50j (le signal)</span>
+      <span><span class="sw" style="background:var(--pos-dim);border:1px solid var(--pos-line)"></span>En position (long)</span>
+    </div>
+  </div>
+</div></header>
+
+<section><div class="wrap">
+  <div class="panel">
+    <div class="panel-hd">
+      <span class="t">BTC-USDC · prix vs SMA50 · le mécanisme</span>
+      <span class="s">long au-dessus de la moyenne, à l'écart en-dessous</span>
+    </div>
+    <canvas id="hero" height="340" aria-label="Graphe prix BTC contre SMA50 avec zones en position"></canvas>
+    <div class="chart-foot">
+      <span>Rendement stratégie <b class="pos">+93,5&nbsp;%</b></span>
+      <span>Buy&amp;hold <b>+17,4&nbsp;%</b></span>
+      <span>Drawdown max <b>61&nbsp;%</b> <span class="muted-note">(vs 77&nbsp;% en hold)</span></span>
+      <span>Exposition <b>52&nbsp;%</b> du temps</span>
+    </div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="panel">
+    <div class="panel-hd">
+      <span class="t">Capital · stratégie vs buy&amp;hold</span>
+      <span class="s">10&nbsp;000&nbsp;$ investis · net de frais 0,2&nbsp;% A/R</span>
+    </div>
+    <canvas id="equity" height="220" aria-label="Courbe de capital stratégie contre buy and hold"></canvas>
+    <div class="chart-foot">
+      <span><i style="display:inline-block;width:16px;border-top:2px solid var(--pos);vertical-align:middle;margin-right:6px"></i>Stratégie <b class="pos">19&nbsp;358&nbsp;$</b></span>
+      <span><i style="display:inline-block;width:16px;border-top:2px solid var(--muted);vertical-align:middle;margin-right:6px"></i>Buy&amp;hold <b>11&nbsp;755&nbsp;$</b></span>
+      <span class="muted-note">L'edge n'est pas de gagner plus dans le bull — c'est d'esquiver le bear.</span>
+    </div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <p class="section-label">La tape · 5 bots du fleet live</p>
+  <p class="section-lede">Chaque actif jugé au frais de référence 0,2&nbsp;% round-trip. Le <b class="amb">walk-forward</b> découpe 5&nbsp;ans en 5&nbsp;fenêtres : un edge robuste gagne sur la majorité <em>sans</em> qu'une seule fenêtre porte plus de 60&nbsp;% du gain.</p>
+  <div class="tblwrap">
+    <table>
+      <thead><tr>
+        <th class="l">Actif</th><th>Verdict</th><th>Rendt</th><th>CAGR</th><th>Sharpe</th>
+        <th>MaxDD</th><th>vs Hold</th><th class="l">Walk-forward (5 fenêtres)</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <p class="section-lede" style="margin-top:14px; font-size:13px">
+    <span class="amb num">▚</span> XRP&nbsp;: seulement 1143&nbsp;jours d'historique (relisté par Coinbase mi-2023, après le procès SEC) — et son buy&amp;hold a capté un rallye que la stratégie a raté.
+  </p>
+</div></section>
+
+<section><div class="wrap">
+  <p class="section-label">Pourquoi 4 sur 5 échouent · une seule fenêtre</p>
+  <p class="section-lede">Découpé en 5 fenêtres d'un an, un edge robuste répartit ses gains dans le temps. Les alts concentrent presque tout sur <b class="amb">une seule année</b> — l'envolée d'un cycle précis. Hors de cette fenêtre, le signal est plat à négatif : ce n'est pas un edge répétable, c'est du recency-bias.</p>
+  <div id="whyrows"></div>
+</div></section>
+
+<section><div class="wrap">
+  <p class="section-label">Sensibilité aux frais · l'épreuve de vérité</p>
+  <p class="section-lede">Coinbase&nbsp;One met les frais à ~0. Mais un edge qui n'existe qu'à 0&nbsp;frais n'est pas un edge. On rejoue chaque actif à trois niveaux — et on montre où il meurt.</p>
+  <div class="tblwrap">
+    <table>
+      <thead><tr>
+        <th class="l">Actif</th>
+        <th>0,0&nbsp;% <small style="font-weight:400;text-transform:none;letter-spacing:0">Coinbase One</small></th>
+        <th>0,2&nbsp;% <small style="font-weight:400;text-transform:none;letter-spacing:0">réaliste</small></th>
+        <th>1,5&nbsp;% <small style="font-weight:400;text-transform:none;letter-spacing:0">taker live</small></th>
+        <th class="l">Lecture</th>
+      </tr></thead>
+      <tbody id="feerows"></tbody>
+    </table>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <p class="section-label">Pourquoi ce rapport est crédible</p>
+  <p class="section-lede">Le gate GO/NO-GO code en dur ce qui distingue une preuve d'un argument de vente. Chaque critère est une façon connue de mentir avec un backtest — neutralisée.</p>
+  <div class="grid2">
+    <div class="crit"><div class="n">01</div><h3>Anti look-ahead</h3><p>Décision à la clôture du jour, <b style="color:var(--ink)">exécution à la barre suivante</b>. Aucune décision n'utilise un prix qu'elle ne pouvait pas connaître.</p></div>
+    <div class="crit"><div class="n">02</div><h3>Net de frais, all-in</h3><p>Frais appliqués aux deux côtés, à trois niveaux. Rendement composé réel, pas un chiffre brut sous-déployé.</p></div>
+    <div class="crit"><div class="n">03</div><h3>Walk-forward</h3><p>L'edge doit tenir sur la <b style="color:var(--ink)">majorité des sous-périodes</b>, sans qu'une seule fenêtre porte le résultat. Tue le mirage «&nbsp;une année bull&nbsp;».</p></div>
+    <div class="crit"><div class="n">04</div><h3>Benchmark équitable</h3><p>Buy&amp;hold comparé sur la <b style="color:var(--ink)">même période active, mêmes frais</b>. Battre un hold gratuit ne compte pas.</p></div>
+    <div class="crit"><div class="n">05</div><h3>Données suffisantes</h3><p>≥&nbsp;2&nbsp;ans, ≥&nbsp;20&nbsp;trades, trous détectés. Sinon&nbsp;: verdict «&nbsp;insuffisant&nbsp;», jamais un edge affiché en vert.</p></div>
+    <div class="crit"><div class="n">06</div><h3>Reproductible</h3><p>Params figés, données horodatées, <b style="color:var(--ink)">empreinte SHA256</b>. Refetch, rejoue, recompute&nbsp;: doit matcher.</p></div>
+  </div>
+  <div class="callout">
+    <p><span class="k">Ce que «&nbsp;1 sur 5&nbsp;» veut dire</span>Ce n'est pas un échec — c'est le rapport qui <b>refuse de gonfler</b> quatre chiffres qu'il ne peut pas soutenir. SOL affiche +171&nbsp;%, mais 77&nbsp;% de ce gain vient d'une seule fenêtre (l'envolée 2023-24)&nbsp;: écarté. C'est exactement ce qui rend le «&nbsp;oui&nbsp;» de BTC digne de confiance. On prouve l'ingénierie, pas les rendements.</p>
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  <p class="thesis">Un edge qu'on ne peut pas reproduire n'est pas un edge — c'est un slogan.</p>
+  <h2>Provenance &amp; vérification</h2>
+  <p class="prov" style="margin-top:14px">
+    <b>Source</b> · api.exchange.coinbase.com/candles · granularité 86400 (daily)<br>
+    <b>Stratégie</b> · trend SMA50, long-only, all-in, <b>hystérésis sortie 1&nbsp;%</b> (calibrée) — <span class="muted-note">logique de signal identique au code de prod (prouvé par test) ; le flip-strict par défaut donne +71&nbsp;% sur BTC, la sortie 1&nbsp;% l'affûte</span><br>
+    <b>Params</b> · warmup 50j · frais réf. 0,2&nbsp;% A/R · exit-buffer 1&nbsp;% · walk-forward K=5 · exéc. barre suivante · rf=0<br>
+    <b>Fleet</b> · BTC · ETH · SOL · XRP · DOGE <span class="muted-note">(fleet live réel)</span><br>
+    <b>Généré</b> · 2026-08-29 · <b>code</b> <span class="amb">35be3f5</span><br>
+    <b>Empreinte</b> · <span class="amb">sha256:804eaca5db099045d3cb0f09527741ee64f622dd1f63ae58599b330be266656f</span>
+  </p>
+  <p class="prov muted-note" style="margin-top:16px">Rapport généré par <b>edge_report.py</b> · rejouable en une commande · aucune donnée brute stockée, seulement l'empreinte des séries.</p>
+</div></footer>
+
+<script>
+const HERO = {"dates": ["2021-10", "2021-10", "2021-11", "2021-11", "2021-11", "2021-11", "2021-12", "2021-12", "2021-12", "2021-12", "2021-12", "2022-01", "2022-01", "2022-01", "2022-01", "2022-02", "2022-02", "2022-02", "2022-02", "2022-03", "2022-03", "2022-03", "2022-03", "2022-03", "2022-04", "2022-04", "2022-04", "2022-04", "2022-05", "2022-05", "2022-05", "2022-05", "2022-06", "2022-06", "2022-06", "2022-06", "2022-06", "2022-07", "2022-07", "2022-07", "2022-07", "2022-08", "2022-08", "2022-08", "2022-08", "2022-08", "2022-09", "2022-09", "2022-09", "2022-09", "2022-10", "2022-10", "2022-10", "2022-10", "2022-11", "2022-11", "2022-11", "2022-11", "2022-11", "2022-12", "2022-12", "2022-12", "2022-12", "2023-01", "2023-01", "2023-01", "2023-01", "2023-02", "2023-02", "2023-02", "2023-02", "2023-03", "2023-03", "2023-03", "2023-03", "2023-03", "2023-04", "2023-04", "2023-04", "2023-04", "2023-05", "2023-05", "2023-05", "2023-05", "2023-05", "2023-06", "2023-06", "2023-06", "2023-06", "2023-07", "2023-07", "2023-07", "2023-07", "2023-08", "2023-08", "2023-08", "2023-08", "2023-08", "2023-09", "2023-09", "2023-09", "2023-09", "2023-10", "2023-10", "2023-10", "2023-10", "2023-11", "2023-11", "2023-11", "2023-11", "2023-11", "2023-12", "2023-12", "2023-12", "2023-12", "2024-01", "2024-01", "2024-01", "2024-01", "2024-01", "2024-02", "2024-02", "2024-02", "2024-02", "2024-03", "2024-03", "2024-03", "2024-03", "2024-04", "2024-04", "2024-04", "2024-04", "2024-05", "2024-05", "2024-05", "2024-05", "2024-05", "2024-06", "2024-06", "2024-06", "2024-06", "2024-07", "2024-07", "2024-07", "2024-07", "2024-07", "2024-08", "2024-08", "2024-08", "2024-08", "2024-09", "2024-09", "2024-09", "2024-09", "2024-10", "2024-10", "2024-10", "2024-10", "2024-10", "2024-11", "2024-11", "2024-11", "2024-11", "2024-12", "2024-12", "2024-12", "2024-12", "2025-01", "2025-01", "2025-01", "2025-01", "2025-01", "2025-02", "2025-02", "2025-02", "2025-02", "2025-03", "2025-03", "2025-03", "2025-03", "2025-04", "2025-04", "2025-04", "2025-04", "2025-04", "2025-05", "2025-05", "2025-05", "2025-05", "2025-06", "2025-06", "2025-06", "2025-06", "2025-07", "2025-07", "2025-07", "2025-07", "2025-07", "2025-08", "2025-08", "2025-08", "2025-08", "2025-09", "2025-09", "2025-09", "2025-09", "2025-10", "2025-10", "2025-10", "2025-10", "2025-10", "2025-11", "2025-11", "2025-11", "2025-11", "2025-12", "2025-12", "2025-12", "2025-12", "2025-12", "2026-01", "2026-01", "2026-01", "2026-01", "2026-02", "2026-02", "2026-02", "2026-02", "2026-03", "2026-03", "2026-03", "2026-03", "2026-04", "2026-04", "2026-04", "2026-04", "2026-04", "2026-05", "2026-05", "2026-05", "2026-05", "2026-06", "2026-06", "2026-06", "2026-06", "2026-07", "2026-07", "2026-07", "2026-07", "2026-07", "2026-08", "2026-08", "2026-08", "2026-08", "2026-08"], "price": [66026.5, 58455.5, 62935.4, 64912.2, 60351.5, 57162.7, 57226.5, 50519.7, 48884.8, 48608.6, 46471.2, 43436.0, 43920.4, 41674.3, 36840.6, 36923.4, 44416.3, 43895.6, 37268.2, 43912.3, 41954.0, 41128.0, 42899.7, 47078.0, 43166.7, 41146.7, 41377.6, 39251.1, 39669.6, 28972.3, 28672.9, 29503.5, 29788.8, 30177.0, 22562.3, 19968.5, 20094.8, 20542.7, 20220.2, 23227.0, 22962.6, 22825.0, 23962.2, 23341.2, 21367.1, 20048.3, 19293.5, 20227.8, 18462.6, 19412.1, 20161.6, 19155.9, 19124.2, 20775.4, 20151.4, 15892.0, 16645.2, 16587.0, 17167.3, 16840.0, 17805.0, 16826.6, 16539.7, 16844.4, 17944.3, 20674.3, 23062.4, 23736.0, 22964.4, 24329.0, 24184.4, 23631.5, 21698.4, 24377.2, 27325.2, 28359.5, 28175.4, 29912.2, 28809.7, 28426.1, 29038.8, 27624.0, 27407.8, 26321.4, 27223.1, 26346.4, 25123.3, 29995.1, 30074.9, 30499.3, 30381.8, 29916.7, 29353.2, 29164.2, 29562.8, 28700.5, 26427.5, 27306.1, 25747.6, 26226.7, 27123.9, 26357.6, 27786.8, 26869.2, 28326.5, 34506.3, 35440.1, 35639.1, 37885.3, 37424.3, 37863.8, 43764.1, 42885.5, 43674.8, 43474.4, 42862.4, 46666.1, 42739.5, 40077.8, 42548.1, 44343.6, 51858.6, 51851.7, 62518.9, 66122.3, 73135.0, 67858.8, 69436.0, 65987.9, 70634.0, 61279.4, 64255.8, 58265.6, 61169.5, 66244.7, 69109.9, 67569.4, 71121.1, 68248.6, 64943.8, 60816.7, 60145.0, 57712.6, 64085.8, 65366.4, 64609.6, 55148.1, 58690.6, 61163.3, 59045.9, 57971.0, 57352.8, 61769.2, 63130.9, 60631.4, 60578.3, 67608.4, 66601.1, 72322.9, 75646.6, 90493.8, 94393.1, 95951.2, 98746.2, 101202.1, 100150.7, 99346.3, 94383.6, 95036.6, 100510.2, 103667.1, 103747.2, 96638.3, 97862.5, 96632.0, 84111.8, 90603.7, 83659.4, 86878.0, 86926.0, 82490.1, 82594.8, 84028.7, 93740.9, 94182.5, 97058.3, 103545.4, 109699.5, 107819.3, 104753.4, 108669.4, 104915.6, 107400.2, 108888.3, 111282.9, 118681.7, 118810.4, 117830.1, 115028.8, 123365.6, 114276.0, 111253.2, 111756.4, 113984.0, 116484.4, 113348.2, 118660.0, 123343.2, 110804.1, 107586.0, 110032.1, 103869.0, 101639.0, 91461.6, 90468.8, 93453.8, 92036.0, 86209.8, 87609.0, 87497.9, 91279.7, 96955.2, 89363.7, 89162.4, 72998.0, 67024.9, 66419.8, 67992.7, 72683.3, 70208.0, 71245.0, 71301.5, 68112.4, 71086.0, 74836.3, 78208.5, 75752.9, 81438.1, 79288.3, 77476.0, 74316.0, 64040.0, 61449.5, 64446.0, 60983.1, 59961.4, 62237.7, 64716.6, 66086.6, 63896.1, 64603.0, 63411.7, 69300.0, 79026.2, 77689.8], "sma": [50011.0, 51560.1, 53813.6, 56297.6, 59148.5, 60634.8, 60847.4, 59555.1, 57629.6, 55690.0, 53748.4, 51279.9, 49061.0, 47087.5, 44922.0, 43428.1, 42689.3, 41718.7, 40607.5, 40402.8, 39957.9, 40178.9, 40728.2, 41403.6, 41754.8, 42019.5, 42118.0, 42054.6, 41947.7, 40773.8, 38597.8, 36278.9, 34600.3, 33169.2, 31212.7, 28644.7, 26707.4, 25306.0, 24078.3, 22942.7, 21829.2, 21325.9, 21703.7, 22156.7, 22411.9, 22334.4, 22101.9, 21907.9, 21349.8, 20794.9, 20164.6, 19819.7, 19660.4, 19632.9, 19581.4, 19599.8, 19291.3, 18852.5, 18433.8, 18114.6, 17831.2, 17302.9, 16794.1, 16784.8, 16894.9, 17463.2, 18234.9, 19078.4, 19948.6, 20702.7, 21787.7, 22683.8, 23004.4, 23030.6, 23610.5, 24233.8, 25099.7, 25728.6, 26639.3, 27365.5, 28345.6, 28561.4, 28482.7, 28291.8, 28100.8, 27626.9, 27350.9, 27098.7, 27348.9, 27852.9, 28314.5, 28762.0, 29139.2, 29585.1, 29981.6, 29825.7, 29214.4, 28678.1, 28041.6, 27505.9, 27143.8, 26751.4, 26470.5, 26616.5, 26783.4, 27531.3, 28743.7, 29933.2, 31384.6, 32729.6, 34113.9, 35999.6, 37737.6, 38873.6, 40043.6, 40947.7, 42112.1, 42895.8, 43011.5, 42876.6, 42988.3, 43701.4, 44943.2, 46285.9, 49109.1, 53132.7, 56724.8, 60118.4, 63122.3, 65566.0, 67300.9, 67527.3, 66628.1, 65816.8, 65188.8, 64988.2, 64950.8, 65287.8, 65933.1, 66306.3, 66418.0, 66392.5, 64931.3, 63894.5, 63629.1, 63237.9, 62143.7, 61694.0, 61350.6, 61981.7, 61711.3, 60262.9, 59261.6, 59734.7, 60331.0, 60752.3, 61016.7, 62299.4, 64156.1, 65694.2, 68383.0, 72115.5, 76945.5, 81643.2, 85996.9, 90812.3, 94670.0, 96606.2, 97675.8, 97581.5, 98523.1, 99171.2, 98783.2, 98706.6, 98946.9, 98274.1, 97290.5, 94693.6, 91942.8, 89775.1, 87992.7, 85788.4, 84190.6, 84344.6, 85645.1, 87442.8, 89955.9, 92913.8, 96821.2, 99887.3, 102725.7, 104306.3, 105521.6, 106170.9, 106784.3, 108034.4, 109827.8, 111519.2, 112658.1, 114749.3, 116029.8, 116633.4, 115656.0, 114689.5, 114356.5, 114340.1, 113617.3, 114319.2, 114423.9, 114169.8, 114295.5, 113119.9, 111462.0, 109020.6, 104129.9, 100574.8, 98098.9, 94894.5, 92046.5, 89821.4, 89204.6, 89928.1, 90300.0, 89964.1, 88442.8, 85764.1, 83025.5, 79652.3, 76358.1, 72821.4, 70507.2, 68951.7, 68666.1, 68767.2, 69696.3, 70916.2, 72080.2, 73068.4, 74562.9, 76026.5, 77126.1, 76883.9, 75010.3, 73202.7, 71064.6, 68085.9, 65917.6, 64109.9, 63078.8, 63327.4, 63234.4, 63332.8, 63971.5, 66065.5, 66990.7], "equity": [9990.0, 8844.5, 9522.3, 9821.4, 9131.4, 8785.3, 8785.3, 8785.3, 8785.3, 8785.3, 8785.3, 8785.3, 8785.3, 8785.3, 8785.3, 8785.3, 8842.3, 8738.6, 7951.9, 7849.6, 7036.4, 6897.4, 7218.5, 7921.6, 7263.4, 6738.3, 6738.3, 6738.3, 6738.3, 6738.3, 6738.3, 6738.3, 6738.3, 6738.3, 6738.3, 6738.3, 6738.3, 6738.3, 6738.3, 6731.6, 6155.8, 5885.0, 6178.2, 6018.0, 5444.9, 5444.9, 5444.9, 5448.3, 5448.3, 5448.3, 5442.8, 5237.2, 5237.2, 5232.0, 5074.8, 3998.1, 3998.1, 3998.1, 3998.1, 3998.1, 3998.1, 3998.1, 3956.1, 3973.1, 4233.0, 4877.0, 5440.4, 5599.3, 5417.3, 5739.2, 5705.1, 5574.6, 5267.3, 5180.1, 5806.5, 6026.4, 5987.2, 6356.3, 6122.0, 6040.5, 6170.7, 5869.1, 5869.1, 5869.1, 5869.1, 5869.1, 5869.1, 5863.3, 5878.9, 5961.8, 5938.9, 5847.9, 5737.8, 5700.8, 5697.1, 5697.1, 5697.1, 5697.1, 5697.1, 5697.1, 5691.4, 5571.3, 5747.8, 5558.0, 5859.4, 7137.7, 7330.9, 7372.0, 7836.7, 7741.3, 7832.2, 9052.7, 8871.0, 9034.2, 8992.8, 8866.2, 9653.0, 8771.6, 8534.2, 8447.3, 8803.7, 10295.7, 10294.3, 12412.1, 13127.5, 14519.8, 13472.3, 13785.4, 13100.9, 14023.3, 13045.9, 13045.9, 13045.9, 13045.9, 13045.9, 13803.4, 13495.7, 14205.1, 13631.4, 12958.3, 12958.3, 12958.3, 12958.3, 12745.9, 13000.5, 12850.0, 12055.4, 12055.4, 12055.4, 11068.9, 11068.9, 11068.9, 11091.0, 11335.5, 10886.7, 10877.1, 12139.4, 11958.6, 12985.9, 13582.7, 16248.6, 16948.8, 17228.5, 17730.4, 18171.3, 17982.6, 17838.1, 17064.1, 16508.6, 16060.1, 16635.4, 16648.3, 16040.5, 16040.5, 16040.5, 16040.5, 16040.5, 16040.5, 16040.5, 16040.5, 16040.5, 16040.5, 16233.2, 18109.5, 18194.8, 18750.4, 20003.6, 21192.5, 20829.3, 20237.0, 20993.5, 20268.3, 19930.2, 20206.3, 20650.7, 22023.7, 22047.6, 21865.7, 21345.8, 22892.9, 21184.9, 20179.5, 20179.5, 20179.5, 20225.0, 19429.9, 20191.9, 20988.8, 18063.9, 18063.9, 17387.1, 17387.1, 17387.1, 17387.1, 17387.1, 17387.1, 17387.1, 17387.1, 17387.1, 17387.1, 17500.4, 18588.5, 17115.9, 17115.9, 17115.9, 17115.9, 17115.9, 17115.9, 17115.9, 17115.9, 16267.3, 16326.2, 15170.4, 15646.6, 16472.0, 17214.3, 16673.8, 17925.2, 17452.0, 17053.1, 16239.4, 16239.4, 16239.4, 16239.4, 16239.4, 16239.4, 16239.4, 16223.2, 16566.6, 16017.5, 16194.7, 15896.1, 17284.6, 19710.5, 19357.8], "bh": [9990.0, 8844.5, 9522.3, 9821.4, 9131.4, 8648.9, 8658.5, 7643.8, 7396.4, 7354.6, 7031.2, 6572.0, 6645.3, 6305.4, 5574.1, 5586.6, 6720.3, 6641.5, 5638.8, 6644.1, 6347.8, 6222.8, 6490.8, 7123.0, 6531.2, 6225.6, 6260.5, 5938.8, 6002.1, 4383.6, 4338.3, 4464.0, 4507.1, 4565.9, 3413.7, 3021.3, 3040.4, 3108.2, 3059.4, 3514.3, 3474.3, 3453.5, 3625.5, 3531.6, 3232.9, 3033.4, 2919.2, 3060.5, 2793.4, 2937.1, 3050.5, 2898.3, 2893.5, 3143.4, 3049.0, 2404.5, 2518.5, 2509.7, 2597.5, 2547.9, 2693.9, 2545.9, 2502.5, 2548.6, 2715.0, 3128.1, 3489.4, 3591.3, 3474.6, 3681.1, 3659.2, 3575.5, 3283.0, 3688.3, 4134.4, 4290.9, 4263.0, 4525.8, 4359.0, 4300.9, 4393.6, 4179.6, 4146.9, 3982.5, 4118.9, 3986.3, 3801.2, 4538.3, 4550.4, 4614.6, 4596.9, 4526.5, 4441.2, 4412.6, 4472.9, 4342.5, 3998.6, 4131.5, 3895.7, 3968.2, 4103.9, 3988.0, 4204.2, 4065.4, 4285.9, 5220.9, 5362.2, 5392.3, 5732.2, 5662.4, 5728.9, 6621.6, 6488.7, 6608.1, 6577.8, 6485.2, 7060.7, 6466.6, 6063.9, 6437.6, 6709.3, 7846.3, 7845.3, 9459.3, 10004.5, 11065.5, 10267.2, 10505.9, 9984.2, 10687.1, 9271.7, 9722.1, 8815.7, 9255.1, 10023.0, 10456.5, 10223.4, 10760.8, 10326.2, 9826.2, 9201.7, 9100.1, 8732.1, 9696.4, 9890.1, 9775.6, 8344.1, 8880.1, 9254.2, 8933.8, 8771.2, 8677.6, 9345.8, 9551.9, 9173.7, 9165.7, 10229.3, 10076.9, 10942.7, 11445.5, 13692.0, 14281.9, 14517.7, 14940.6, 15312.2, 15153.1, 15031.4, 14280.5, 14379.3, 15207.5, 15685.1, 15697.2, 14621.6, 14806.9, 14620.7, 12726.3, 13708.6, 12657.9, 13144.9, 13152.1, 12481.0, 12496.8, 12713.8, 14183.3, 14250.1, 14685.2, 15666.7, 16597.8, 16313.4, 15849.5, 16442.0, 15874.0, 16250.0, 16475.1, 16837.4, 17956.9, 17976.4, 17828.0, 17404.2, 18665.6, 17290.3, 16832.9, 16909.1, 17246.1, 17624.4, 17149.9, 17953.6, 18662.2, 16765.0, 16278.1, 16648.2, 15715.7, 15378.3, 13838.4, 13688.2, 14139.8, 13925.3, 13043.8, 13255.5, 13238.7, 13810.9, 14669.6, 13521.0, 13490.5, 11044.8, 10141.1, 10049.5, 10287.5, 10997.2, 10622.7, 10779.6, 10788.1, 10305.6, 10755.5, 11322.9, 11833.2, 11461.6, 12321.8, 11996.5, 11722.3, 11244.2, 9689.4, 9297.5, 9750.9, 9226.9, 9072.3, 9416.7, 9791.8, 9999.1, 9667.7, 9774.6, 9594.4, 10485.3, 11956.9, 11754.7], "inpos": [1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]};
+const A = [
+  {t:'BTC', d:'BTC-USDC', v:'EDGE PROUVÉ', cls:'ok', ret:93.5, cagr:14.6, sharpe:0.570, sortino:0.854, maxdd:61.3, calmar:0.24, pf:1.85, expo:52, trades:41, win:32, wlo:20, whi:47, bh:17.4, edge:76.1, wf:[-48,6,99,78,-4], conc:52, wfv:'ROBUSTE', fees:[110.1,93.5,13.3], proven:true, dom:'sept. 2023 → sept. 2024', domr:99},
+  {t:'ETH', d:'ETH-USDC', v:'NON PROBANT', cls:'no', ret:11.1, cagr:2.2, sharpe:0.278, sortino:0.419, maxdd:60.6, calmar:0.04, pf:1.36, expo:49, trades:41, win:39, wlo:26, whi:54, bh:-41.6, edge:52.7, wf:[-35,-9,17,79,-11], conc:78, wfv:'FRAGILE', fees:[20.6,11.1,-35.0], proven:false, dom:'sept. 2024 → sept. 2025', domr:79},
+  {t:'SOL', d:'SOL-USDC', v:'NON PROBANT', cls:'no', ret:170.7, cagr:22.7, sharpe:0.633, sortino:1.023, maxdd:64.7, calmar:0.35, pf:2.45, expo:48, trades:42, win:33, wlo:21, whi:48, bh:-41.4, edge:212.1, wf:[-14,2,237,41,-36], conc:77, wfv:'FRAGILE', fees:[194.4,170.7,56.4], proven:false, dom:'sept. 2023 → sept. 2024', domr:237},
+  {t:'XRP', d:'XRP-USDC', v:'NON PROBANT', cls:'no', ret:49.5, cagr:14.4, sharpe:0.509, sortino:0.875, maxdd:61.6, calmar:0.23, pf:2.73, expo:43, trades:35, win:20, wlo:10, whi:36, bh:178.0, edge:-128.5, wf:[12,-46,200,-4,-18], conc:91, wfv:'FRAGILE', fees:[60.3,49.5,-5.4], proven:false, short:true, dom:'nov. 2024 → juin 2025', domr:200},
+  {t:'DOGE', d:'DOGE-USDC', v:'NON PROBANT', cls:'no', ret:79.5, cagr:12.8, sharpe:0.502, sortino:0.841, maxdd:62.6, calmar:0.2, pf:2.09, expo:40, trades:43, win:37, wlo:24, whi:52, bh:-66.8, edge:146.2, wf:[-26,-15,52,181,-33], conc:71, wfv:'FRAGILE', fees:[95.6,79.5,2.4], proven:false, dom:'sept. 2024 → sept. 2025', domr:181},
+];
+const C = getComputedStyle(document.documentElement);
+const col = n => C.getPropertyValue(n).trim();
+const sgn = v => (v>0?'+':'') + v.toFixed(1);
+
+/* ── tape table ── */
+function wfBars(wf){
+  const m = Math.max(...wf.map(Math.abs), 1);
+  const bars = wf.map(r=>{
+    const h = Math.max(2, Math.round(Math.abs(r)/m*24));
+    const c = r>=0? col('--pos') : col('--neg');
+    const shift = r>=0? 'flex-end' : 'flex-start';
+    return `<span style="height:${h}px;background:${c};align-self:${shift}"></span>`;
+  }).join('');
+  return `<span class="wf" style="align-items:center">${bars}</span>`;
+}
+document.getElementById('rows').innerHTML = A.map(a=>`
+  <tr class="${a.proven?'proven':''}">
+    <td class="l"><span class="tick">${a.t}<small>${a.short?'1143 j · dès 2023':'1825 j · dès 2021'}</small></span></td>
+    <td><span class="pill ${a.cls}">${a.v}</span></td>
+    <td class="${a.ret>=0?'pos':'neg'}">${sgn(a.ret)}%</td>
+    <td class="${a.cagr>=0?'pos':'neg'}">${sgn(a.cagr)}%</td>
+    <td>${a.sharpe.toFixed(2)}</td>
+    <td class="neg">${a.maxdd.toFixed(0)}%</td>
+    <td class="${a.edge>=0?'pos':'neg'}">${sgn(a.edge)}</td>
+    <td class="l">${wfBars(a.wf)} <span class="muted-note" style="font-size:11px">${a.wfv.toLowerCase()} · conc ${a.conc}%</span></td>
+  </tr>`).join('');
+
+/* ── fee table ── */
+function feeCell(v){ const c=v>=0?'pos':'neg'; return `<td class="${c}">${sgn(v)}%</td>`; }
+document.getElementById('feerows').innerHTML = A.map(a=>{
+  const dies = a.fees[2] < 0;
+  const read = a.proven ? 'survit à 0,2% · meurt à 1,5%'
+             : (a.fees[1] < a.bh ? 'sous le hold même à 0%' : (dies?'s\'évapore aux frais réels':'positif mais fragile'));
+  return `<tr>
+    <td class="l"><span class="tick" style="font-size:13px">${a.t}</span></td>
+    ${feeCell(a.fees[0])}${feeCell(a.fees[1])}${feeCell(a.fees[2])}
+    <td class="l muted-note" style="white-space:normal">${read}</td>
+  </tr>`;
+}).join('');
+
+/* ── why panel : concentration du gain sur une fenetre ── */
+document.getElementById('whyrows').innerHTML = A.map(a=>{
+  const barcol = a.proven ? col('--pos') : col('--neg');
+  const fill   = a.proven ? col('--pos-dim') : col('--neg-dim');
+  return `<div class="whyrow">
+    <div class="whyhd"><span class="tick">${a.t}</span><span class="pill ${a.cls}">${a.v}</span></div>
+    <div class="conc"><div class="concfill" style="width:${a.conc}%;background:${fill};border-color:${barcol}"></div>
+      <span class="conclbl"><b style="color:${barcol}">${a.conc}%</b> du gain sur une seule fenêtre</span></div>
+    <div class="whyfoot">
+      <span class="muted-note">fenêtre dominante · <b style="color:var(--ink)">${a.dom}</b> = <span class="pos">+${a.domr}%</span></span>
+      <span class="${a.proven?'pos':'neg'}">${a.proven?'→ gains répartis dans le temps = robuste':'→ tout sur une fenêtre = fragile'}</span>
+    </div>
+  </div>`;
+}).join('');
+
+/* ── canvas helpers ── */
+function fit(cv){
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  const w = cv.clientWidth, h = cv.getAttribute('height')*1;
+  cv.width = w*dpr; cv.height = h*dpr;
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx, w, h};
+}
+function niceLine(ctx, pts, color, width){
+  ctx.beginPath(); ctx.lineWidth=width; ctx.strokeStyle=color;
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  pts.forEach((p,i)=> i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));
+  ctx.stroke();
+}
+
+function drawHero(){
+  const cv = document.getElementById('hero'); const {ctx,w,h} = fit(cv);
+  ctx.clearRect(0,0,w,h);
+  const padL=54, padR=14, padT=16, padB=26;
+  const n = HERO.price.length;
+  const xs = i => padL + (w-padL-padR) * i/(n-1);
+  const vals = HERO.price.concat(HERO.sma.filter(v=>v!=null));
+  let lo=Math.min(...vals), hi=Math.max(...vals); const pad=(hi-lo)*0.06; lo-=pad; hi+=pad;
+  const ys = v => padT + (h-padT-padB) * (1 - (v-lo)/(hi-lo));
+
+  // in-position green bands
+  ctx.fillStyle = col('--pos-dim');
+  let s=null;
+  for(let i=0;i<n;i++){
+    if(HERO.inpos[i] && s===null) s=i;
+    if((!HERO.inpos[i]||i===n-1) && s!==null){ const e=(!HERO.inpos[i])?i:i+1;
+      ctx.fillRect(xs(s), padT, xs(e)-xs(s), h-padT-padB); s=null; }
+  }
+  // gridlines + y labels
+  ctx.font = "11px 'IBM Plex Mono', monospace"; ctx.textBaseline='middle';
+  for(let g=0; g<=4; g++){
+    const v = lo + (hi-lo)*g/4; const y = ys(v);
+    ctx.strokeStyle = col('--line'); ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke();
+    ctx.fillStyle = col('--faint'); ctx.textAlign='right';
+    ctx.fillText('$'+Math.round(v/1000)+'k', padL-8, y);
+  }
+  // x labels (years)
+  ctx.textAlign='center'; ctx.textBaseline='bottom';
+  let lastYr=null;
+  for(let i=0;i<n;i++){ const yr=HERO.dates[i].slice(0,4);
+    if(yr!==lastYr){ lastYr=yr; ctx.fillStyle=col('--faint'); ctx.fillText(yr, xs(i), h-6); }
+  }
+  // SMA (amber) then price (ink)
+  niceLine(ctx, HERO.sma.map((v,i)=> v==null?null:[xs(i),ys(v)]).filter(Boolean), col('--amber'), 1.6);
+  niceLine(ctx, HERO.price.map((v,i)=>[xs(i),ys(v)]), col('--ink'), 1.8);
+}
+
+function drawEquity(){
+  const cv = document.getElementById('equity'); const {ctx,w,h} = fit(cv);
+  ctx.clearRect(0,0,w,h);
+  const padL=54, padR=14, padT=16, padB=24;
+  const eq = HERO.equity, bh = HERO.bh.map(v=>v==null?10000:v);
+  const n = eq.length; const xs = i => padL + (w-padL-padR) * i/(n-1);
+  const vals = eq.concat(bh); let lo=Math.min(...vals), hi=Math.max(...vals);
+  const pad=(hi-lo)*0.08; lo-=pad; hi+=pad;
+  const ys = v => padT + (h-padT-padB) * (1 - (v-lo)/(hi-lo));
+  // baseline 10000
+  const yb = ys(10000);
+  ctx.strokeStyle=col('--line-2'); ctx.setLineDash([3,4]); ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(padL,yb); ctx.lineTo(w-padR,yb); ctx.stroke(); ctx.setLineDash([]);
+  ctx.font="11px 'IBM Plex Mono', monospace"; ctx.fillStyle=col('--faint');
+  ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.fillText('10k', padL-8, yb);
+  for(const val of [Math.round(hi/1000)*1000, Math.round(lo/1000)*1000]){
+    if(val<=0) continue; const y=ys(val);
+    ctx.fillText(Math.round(val/1000)+'k', padL-8, y);
+  }
+  ctx.textAlign='center'; ctx.textBaseline='bottom'; let lastYr=null;
+  for(let i=0;i<n;i++){ const yr=HERO.dates[i].slice(0,4);
+    if(yr!==lastYr){ lastYr=yr; ctx.fillStyle=col('--faint'); ctx.fillText(yr, xs(i), h-4); } }
+  // fill under strategy
+  const stratPts = eq.map((v,i)=>[xs(i),ys(v)]);
+  ctx.beginPath(); stratPts.forEach((p,i)=> i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));
+  ctx.lineTo(xs(n-1), h-padB); ctx.lineTo(xs(0), h-padB); ctx.closePath();
+  ctx.fillStyle=col('--pos-dim'); ctx.fill();
+  niceLine(ctx, bh.map((v,i)=>[xs(i),ys(v)]), col('--muted'), 1.4);
+  niceLine(ctx, stratPts, col('--pos'), 2);
+}
+
+function draw(){ drawHero(); drawEquity(); }
+draw();
+let rt; window.addEventListener('resize', ()=>{ clearTimeout(rt); rt=setTimeout(draw, 120); });
+</script>
