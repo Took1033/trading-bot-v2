@@ -129,14 +129,15 @@ async def update_sentiment_once() -> dict | None:
         return None
 
     score, commentary = scored
-    trading_state.set_news_sentiment(score, commentary)
+    trading_state.set_news_sentiment(score, commentary, headlines)
 
     log.info("news_sentiment_updated",
              score=round(score, 2),
              n_headlines=len(headlines),
              commentary=commentary[:80])
 
-    return {"score": score, "commentary": commentary, "n_headlines": len(headlines)}
+    return {"score": score, "commentary": commentary,
+            "n_headlines": len(headlines), "headlines": headlines}
 
 
 async def news_sentiment_loop() -> None:
@@ -153,13 +154,28 @@ async def news_sentiment_loop() -> None:
 
             if result:
                 new_score = result["score"]
-                # Notif si changement significatif (et pas premier passage)
+                # Notif si changement significatif (et pas premier passage) — PEDAGOGIQUE :
+                # le score seul ("0.15 -> 0.65") est illisible ; on traduit en clair + effet concret.
                 if last_score is not None and abs(new_score - last_score) >= NOTIFY_ON_CHANGE:
+                    lbl_old = trading_state.news_sentiment_label(last_score)
+                    lbl_new = trading_state.news_sentiment_label(new_score)
+                    mult = trading_state.news_sentiment_multiplier(new_score)
+                    eff = round((mult - 1) * 100)
+                    if eff > 0:
+                        effect = f"le bot prendra des positions **{eff}% plus grosses** (news porteuses)"
+                    elif eff < 0:
+                        effect = f"le bot prendra des positions **{abs(eff)}% plus petites** (prudence)"
+                    else:
+                        effect = "**taille des positions inchangée** (sentiment neutre)"
                     emoji = "📈" if new_score > last_score else "📉"
+                    heads = "\n".join(f"• {h}" for h in (result.get("headlines") or [])[:3])
                     await notifier.notify(
-                        f"{emoji} *Sentiment news changé*\n"
-                        f"Score : `{last_score:+.2f}` → `{new_score:+.2f}`\n"
+                        f"{emoji} *Ambiance du marché crypto : {lbl_new}*\n"
+                        f"Le sentiment des news est passé de _{lbl_old}_ à _{lbl_new}_.\n"
+                        f"(score {last_score:+.2f} → {new_score:+.2f} · échelle −1 très baissier … +1 très haussier)\n"
+                        f"➡️ Concrètement : {effect}.\n"
                         f"_{result['commentary']}_"
+                        + (f"\n\nÀ la une :\n{heads}" if heads else "")
                     )
                 last_score = new_score
 

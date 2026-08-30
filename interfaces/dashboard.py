@@ -1996,6 +1996,16 @@ async def handle_exec(request: web.Request) -> web.Response:
     })
 
 
+async def handle_news_api(request: web.Request) -> web.Response:
+    """Sentiment news global + titres frais + effet concret sur le bot (pedagogique). Lecture seule."""
+    from agents import trading_state
+    try:
+        return web.json_response(trading_state.get_news())
+    except Exception as exc:
+        log.debug("news_api_failed", error=str(exc))
+        return web.json_response({"score": None, "label": "indisponible", "headlines": []})
+
+
 async def handle_history(request: web.Request) -> web.Response:
     """Retourne l'historique de prix en memoire pour chaque bot (sparklines)."""
     swarm = _get_swarm()
@@ -2832,6 +2842,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/director",            handle_director)
     app.router.add_get("/api/health",              handle_health)
     app.router.add_get("/api/exec",                handle_exec)
+    app.router.add_get("/api/news",                handle_news_api)
     app.router.add_get("/api/decisions",           handle_decisions)
     app.router.add_get("/api/history",             handle_history)
     app.router.add_get("/api/pnl_curve",            handle_pnl_curve)

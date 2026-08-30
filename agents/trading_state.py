@@ -147,17 +147,48 @@ def get_fear_greed() -> tuple[int | None, str]:
 
 _news_score:      float | None = None
 _news_commentary: str          = "—"
+_news_headlines:  list[str]    = []
+_news_ts:         str | None   = None
 
 
-def set_news_sentiment(score: float | None, commentary: str = "—") -> None:
-    """Publie le sentiment global news (-1 = bearish, +1 = bullish)."""
-    global _news_score, _news_commentary
+def set_news_sentiment(score: float | None, commentary: str = "—",
+                       headlines: list[str] | None = None) -> None:
+    """Publie le sentiment global news (-1 = bearish, +1 = bullish) + les titres frais."""
+    global _news_score, _news_commentary, _news_headlines, _news_ts
     _news_score = score
     _news_commentary = commentary
+    if headlines is not None:
+        _news_headlines = list(headlines[:12])
+    from datetime import datetime, timezone
+    _news_ts = datetime.now(timezone.utc).isoformat()
 
 
 def get_news_sentiment() -> tuple[float | None, str]:
     return _news_score, _news_commentary
+
+
+def news_sentiment_label(score: float | None) -> str:
+    """Traduit le score en langage clair (appli + notifs)."""
+    if score is None:  return "indisponible"
+    if score >= 0.5:   return "nettement haussier"
+    if score >= 0.2:   return "légèrement haussier"
+    if score > -0.2:   return "neutre"
+    if score > -0.5:   return "légèrement baissier"
+    return "nettement baissier"
+
+
+def get_news() -> dict:
+    """Vue riche pour l'appli : score, libellé clair, effet concret sur le bot, titres frais."""
+    mult = news_sentiment_multiplier(_news_score)
+    return {
+        "score": _news_score,
+        "label": news_sentiment_label(_news_score),
+        "commentary": _news_commentary,
+        "multiplier": round(mult, 2),
+        "effect_pct": round((mult - 1) * 100, 1),   # effet sur la taille des NOUVELLES entrees
+        "headlines": _news_headlines,
+        "updated_at": _news_ts,
+    }
 
 
 def news_sentiment_multiplier(score: float | None) -> float:

@@ -281,6 +281,17 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 .trrow .trsym{font-family:var(--disp);font-weight:700;font-size:.95rem;width:58px;flex-shrink:0;}
 .trrow .trmid{flex:1;font-family:var(--mono);font-size:.7rem;color:var(--mut);}
 .trrow .trpnl{font-family:var(--disp);font-weight:700;font-size:.95rem;}
+.newscard{background:var(--surf);border:1px solid var(--bd);border-radius:14px;padding:14px 16px;margin-bottom:6px;}
+.news-head{display:flex;align-items:center;gap:9px;font-weight:700;font-size:.98rem;}
+.news-dot{width:11px;height:11px;border-radius:50%;flex:none;}
+.news-score{margin-left:auto;font-family:var(--disp);font-size:.85rem;color:var(--ink2);}
+.news-effect{color:var(--ink2);font-size:.85rem;margin-top:7px;line-height:1.45;}
+.news-com{font-style:italic;color:var(--ink2);font-size:.85rem;margin-top:8px;line-height:1.45;}
+.news-list{margin-top:11px;display:flex;flex-direction:column;gap:8px;}
+.news-item{font-size:.83rem;line-height:1.4;color:var(--ink);padding-left:15px;position:relative;}
+.news-item::before{content:"›";position:absolute;left:2px;color:var(--acc);font-weight:700;}
+.news-src{color:var(--mut);}
+.news-meta{color:var(--mut);font-size:.72rem;margin-top:11px;}
 </style></head><body>
 
 <div id="bar">
@@ -323,6 +334,9 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
       <div class="g fg"><div class="gl">Fear &amp; Greed<span class="info" data-gloss="feargreed">i</span></div><div class="gv" id="g-fg">—</div><div class="track"><span class="mk" id="g-fg-m" style="left:50%"></span></div><div class="sub" id="g-fg-s">—</div></div>
       <div class="g"><div class="gl">Régime marché<span class="info" data-gloss="regime">i</span></div><div class="gv" id="g-reg">—</div><div class="track"><i class="fill" id="g-reg-f" style="width:100%"></i></div><div class="sub" id="g-reg-s">via BTC</div></div>
     </div>
+
+    <div class="eyebrow">Actualité &amp; sentiment du marché</div>
+    <div id="news-card" class="newscard"><div style="color:var(--mut);font-size:13px">Chargement de l'actualité…</div></div>
 
     <div class="eyebrow" id="bots-eyebrow">Mes bots</div>
     <div id="bots"></div>
@@ -782,18 +796,57 @@ function openLesson(key){const l=LESSONS[key];if(!l)return;$('g-term').textConte
 function renderLessons(){const el=$('lessons');if(!el)return;
   el.innerHTML=LESSON_ORDER.map((k,i)=>'<div class="lrow" data-lesson="'+k+'"><span class="lt">'+(i+1)+'. '+esc(LESSONS[k].t)+'</span><span class="lc">›</span></div>').join('');}
 // Axe 2 — explication EN SITUATION d'un bot (dynamique).
+function botMoney(v){
+  if(!(v>0)) return '';
+  if(v>=100) return '$'+Math.round(v).toLocaleString('en-US');
+  if(v>=1)   return '$'+v.toFixed(2);
+  return '$'+v.toPrecision(2);
+}
 function botExplain(b){
   const p=b.position||{},hasPos=p.qty>0,dist=(typeof b.dist_pct==='number')?b.dist_pct:null;
   const smaN=(CFG&&CFG.sma_period)||50, sym=(b.symbol||'').split('-')[0];
+  const px=b.current_price||0, buf=(CFG&&CFG.exit_buffer)||0;
+  const sma=(dist!=null&&px>0)?px/(1+dist/100):null;   // niveau de la moyenne mobile
   if(b.paused) return 'Ce bot est <b>en pause</b> : il n\'ouvrira pas de nouvelle position (les sorties de protection restent actives).';
   if(hasPos){
-    const pl=botPnl(b); let s='<b>En position</b> sur '+sym+(pl!=null?' ('+(pl>=0?'+':'')+pl.toFixed(1)+'%)':'')+'. Il tient tant que le prix reste au-dessus de sa moyenne '+smaN+'j';
-    if(dist!=null){const m=dist+((CFG&&CFG.exit_buffer)||0);if(m>0)s+=' — il vendrait si le prix baissait d\'environ '+m.toFixed(1)+'%';}
-    return s+'. Pas de take-profit : on laisse courir la tendance.';
+    const pl=botPnl(b), exitPx=(sma!=null)?sma*(1-buf/100):null;
+    let s='<b>En position</b> sur '+sym;
+    if(pl!=null) s+=' — actuellement '+(pl>=0?'<b class="pos">+':'<b class="neg">')+pl.toFixed(1)+'%</b>';
+    s+='. Le bot <b>tient</b> tant que '+sym+' reste au-dessus de sa moyenne '+smaN+'j'+(sma!=null?' (~'+botMoney(sma)+')':'')+'. ';
+    if(exitPx!=null) s+='Il <b>vendrait</b> automatiquement si le prix passait sous ~<b>'+botMoney(exitPx)+'</b>. ';
+    return s+'Pas de take-profit : on laisse courir la tendance — le gain n\'est pas verrouillé, il peut encore monter comme redescendre.';
   }
-  if(dist!=null&&dist<0) return '<b>En attente.</b> Le prix de '+sym+' est '+Math.abs(dist).toFixed(1)+'% <b>sous</b> sa moyenne '+smaN+'j. Ce bot n\'achète que quand le prix repasse au-dessus — il suit la tendance, il ne tente pas d\'attraper le creux.';
-  if(dist!=null&&dist>=0) return '<b>Prêt.</b> Le prix de '+sym+' est '+dist.toFixed(1)+'% <b>au-dessus</b> de sa moyenne '+smaN+'j : tendance haussière, il peut ouvrir au prochain cycle (sauf pause, cap d\'exposition ou peur extrême).';
+  if(dist!=null&&dist<0) return '<b>En attente.</b> '+sym+' est '+Math.abs(dist).toFixed(1)+'% <b>sous</b> sa moyenne '+smaN+'j'+(sma!=null?' (~'+botMoney(sma)+')':'')+'. Le bot <b>achètera</b> dès que le prix repassera au-dessus de ce niveau — il suit la tendance, il ne tente pas d\'attraper le creux.';
+  if(dist!=null&&dist>=0) return '<b>Prêt.</b> '+sym+' est '+dist.toFixed(1)+'% <b>au-dessus</b> de sa moyenne '+smaN+'j'+(sma!=null?' (~'+botMoney(sma)+')':'')+' : tendance haussière. Il peut ouvrir au prochain cycle (sauf pause, cap d\'exposition atteint, ou peur extrême du marché).';
   return 'Bot actif, à l\'écart (flat) pour l\'instant.';
+}
+
+// Actualité & sentiment du marché (pedagogique) — /api/news
+function renderNews(nw){
+  const el=$('news-card'); if(!el) return;
+  if(!nw || nw.score==null){
+    el.innerHTML='<div style="color:var(--mut);font-size:13px">Actualité indisponible pour l\'instant — le sentiment se met à jour toutes les heures à partir des titres crypto.</div>';
+    return;
+  }
+  const s=nw.score, eff=nw.effect_pct||0;
+  const dot = s>=0.2?'var(--pos)': s<=-0.2?'var(--neg)':'var(--warn)';
+  let effTxt;
+  if(eff>0) effTxt='➜ Le bot prend des positions <b>'+eff+'% plus grosses</b> (news porteuses).';
+  else if(eff<0) effTxt='➜ Le bot prend des positions <b>'+Math.abs(eff)+'% plus petites</b> (prudence).';
+  else effTxt='➜ <b>Taille des positions inchangée</b> — sentiment neutre.';
+  const heads=(nw.headlines||[]).slice(0,4).map(h=>{
+    const m=/^\[([^\]]+)\]\s*(.*)$/.exec(h);
+    return m ? '<div class="news-item"><span class="news-src">'+esc(m[1])+'</span> · '+esc(m[2])+'</div>'
+             : '<div class="news-item">'+esc(h)+'</div>';
+  }).join('');
+  el.innerHTML=
+    '<div class="news-head"><span class="news-dot" style="background:'+dot+'"></span>'+
+      'Ambiance : '+esc((nw.label||'').toUpperCase())+
+      '<span class="news-score">'+(s>0?'+':'')+s.toFixed(2)+' <span style="color:var(--mut)">/ −1…+1</span></span></div>'+
+    '<div class="news-effect">'+effTxt+'</div>'+
+    ((nw.commentary&&nw.commentary!=='—')?'<div class="news-com">« '+esc(nw.commentary)+' »</div>':'')+
+    (heads?'<div class="news-list">'+heads+'</div>':'')+
+    (nw.updated_at?'<div class="news-meta">Sentiment noté par IA sur les titres CoinDesk &amp; CoinTelegraph · '+relTime(nw.updated_at)+'</div>':'');
 }
 
 // ==== Niveau B — visite guidee (1er lancement + rejouable) ====
@@ -1095,8 +1148,8 @@ function drawEquity(){
 
 async function refresh(){
   try{
-    const [pf,sw,cfg,dir,hl]=await Promise.all([api('/api/portfolio'),api('/api/swarm'),api('/api/config'),api('/api/director'),api('/api/health')]);
-    window._PF=pf;SW=sw;CFG=cfg;DIR=dir;HEALTH=hl;ONLINE=true;render();
+    const [pf,sw,cfg,dir,hl,news]=await Promise.all([api('/api/portfolio'),api('/api/swarm'),api('/api/config'),api('/api/director'),api('/api/health'),api('/api/news').catch(()=>null)]);
+    window._PF=pf;SW=sw;CFG=cfg;DIR=dir;HEALTH=hl;ONLINE=true;render();renderNews(news);
     $('upd').textContent='maj '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
   }catch(e){ONLINE=false;$('upd').textContent='hors ligne';setDot();}
   try{ const pc=await api('/api/pnl_curve?days=365'); EQ=(pc&&pc.points)||[]; drawEquity(); }catch(e){}
