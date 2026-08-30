@@ -177,8 +177,36 @@ def news_sentiment_label(score: float | None) -> str:
     return "nettement baissier"
 
 
+# Mots-cles par crypto pour rattacher un titre a un actif (news par-crypto).
+# Noms complets surs + tickers avec frontiere de mot ; tickers ambigus (link/dot/near/uni/atom
+# = mots anglais courants) rattaches par leur NOM COMPLET seulement, pour eviter les faux positifs.
+NEWS_KEYWORDS = {
+    "BTC": [r"bitcoin", r"\bbtc\b"],   "ETH":  [r"ethereum", r"\beth\b"],
+    "SOL": [r"solana", r"\bsol\b"],    "XRP":  [r"\bxrp\b", r"ripple"],
+    "DOGE": [r"dogecoin", r"\bdoge\b"], "ADA": [r"cardano", r"\bada\b"],
+    "AVAX": [r"avalanche", r"\bavax\b"], "LINK": [r"chainlink"],
+    "DOT": [r"polkadot"],              "LTC":  [r"litecoin", r"\bltc\b"],
+    "BCH": [r"bitcoin cash", r"\bbch\b"], "ATOM": [r"\bcosmos\b"],
+    "XLM": [r"stellar", r"\bxlm\b"],   "UNI":  [r"uniswap"],
+    "AAVE": [r"\baave\b"],             "NEAR": [r"near protocol"],
+}
+
+
+def news_by_symbol(headlines: list[str] | None = None) -> dict[str, list[str]]:
+    """Regroupe les titres par crypto mentionnee (matching a frontieres de mot)."""
+    import re
+    hs = headlines if headlines is not None else _news_headlines
+    out: dict[str, list[str]] = {}
+    for h in hs:
+        low = h.lower()
+        for sym, pats in NEWS_KEYWORDS.items():
+            if any(re.search(p, low) for p in pats):
+                out.setdefault(sym, []).append(h)
+    return out
+
+
 def get_news() -> dict:
-    """Vue riche pour l'appli : score, libellé clair, effet concret sur le bot, titres frais."""
+    """Vue riche pour l'appli : score, libellé clair, effet concret, titres frais + par-crypto."""
     mult = news_sentiment_multiplier(_news_score)
     return {
         "score": _news_score,
@@ -187,6 +215,7 @@ def get_news() -> dict:
         "multiplier": round(mult, 2),
         "effect_pct": round((mult - 1) * 100, 1),   # effet sur la taille des NOUVELLES entrees
         "headlines": _news_headlines,
+        "by_symbol": news_by_symbol(),               # {SYM: [titres mentionnant cet actif]}
         "updated_at": _news_ts,
     }
 

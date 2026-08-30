@@ -165,6 +165,12 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
   padding:13px 15px;font-size:.9rem;color:var(--ink2);line-height:1.55;margin-bottom:14px;}
 #sheet #sh-explain b{color:var(--ink);font-weight:600;}
 #sheet #sh-explain:empty{display:none;}
+#sheet #sh-news{margin-bottom:14px;}
+#sheet #sh-news .shn-h{font-size:.72rem;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);margin-bottom:9px;}
+#sheet #sh-news .shn-i{font-size:.83rem;line-height:1.42;color:var(--ink2);padding-left:15px;position:relative;margin-bottom:8px;}
+#sheet #sh-news .shn-i::before{content:"\203A";position:absolute;left:2px;color:var(--acc);font-weight:700;}
+#sheet #sh-news .shn-i b{color:var(--mut);font-weight:400;}
+#sheet #sh-news:empty{display:none;}
 #sheet .drow{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--bd);font-size:.9rem;}
 #sheet .drow .dl{color:var(--ink2);} #sheet .drow .dv{font-family:var(--mono);font-weight:700;}
 #sheet .acts{display:flex;gap:10px;margin-top:20px;}
@@ -413,6 +419,7 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
   <h2 id="sh-name">—</h2><div class="ssym" id="sh-sym">—</div>
   <div class="bignpnl" id="sh-pnl">—</div>
   <div id="sh-explain"></div>
+  <div id="sh-news"></div>
   <div id="sh-rows"></div>
   <div id="sh-chart-wrap" style="display:none">
     <div class="cl">Prix vs SMA 50 j — 90 derniers jours</div>
@@ -978,6 +985,17 @@ function openSheet(i){
   const drow=(l,v)=>'<div class="drow"><span class="dl">'+l+'</span><span class="dv">'+v+'</span></div>';
   const valUsd=hasPos?(p.qty*b.current_price):0, plUsd=hasPos?(p.qty*(b.current_price-(p.avg_price||0))):0;
   $('sh-explain').innerHTML=botExplain(b);
+  (function(){
+    const sym=(b.symbol||'').split('-')[0];
+    const by=(window._NEWS&&window._NEWS.by_symbol)||{};
+    const hs=(by[sym]||[]).slice(0,4);
+    const el=$('sh-news'); if(!el) return;
+    if(!hs.length){ el.innerHTML=''; return; }
+    el.innerHTML='<div class="shn-h">Actualité '+esc(sym)+'</div>'+hs.map(function(h){
+      const m=/^\[([^\]]+)\]\s*(.*)$/.exec(h);
+      return m?'<div class="shn-i"><b>'+esc(m[1])+'</b> · '+esc(m[2])+'</div>':'<div class="shn-i">'+esc(h)+'</div>';
+    }).join('');
+  })();
   $('sh-rows').innerHTML=
     drow('Statut',b.paused?'⏸ en pause':(hasPos?'position ouverte':'▶ actif (flat)'))+
     (hasPos?drow('Position'+info('position'),(p.qty||0).toPrecision(4)+' '+(b.symbol||'').split('-')[0]):'')+
@@ -1149,7 +1167,7 @@ function drawEquity(){
 async function refresh(){
   try{
     const [pf,sw,cfg,dir,hl,news]=await Promise.all([api('/api/portfolio'),api('/api/swarm'),api('/api/config'),api('/api/director'),api('/api/health'),api('/api/news').catch(()=>null)]);
-    window._PF=pf;SW=sw;CFG=cfg;DIR=dir;HEALTH=hl;ONLINE=true;render();renderNews(news);
+    window._PF=pf;SW=sw;CFG=cfg;DIR=dir;HEALTH=hl;window._NEWS=news;ONLINE=true;render();renderNews(news);
     $('upd').textContent='maj '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
   }catch(e){ONLINE=false;$('upd').textContent='hors ligne';setDot();}
   try{ const pc=await api('/api/pnl_curve?days=365'); EQ=(pc&&pc.points)||[]; drawEquity(); }catch(e){}
