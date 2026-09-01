@@ -149,6 +149,13 @@ _news_score:      float | None = None
 _news_commentary: str          = "—"
 _news_headlines:  list[str]    = []
 _news_ts:         str | None   = None
+_news_by_symbol_store: dict[str, list[str]] = {}   # news par-crypto (Google News FR par requete)
+
+
+def set_news_by_symbol(by_symbol: dict[str, list[str]] | None) -> None:
+    """Publie les titres FR par crypto (une requete Google News par actif)."""
+    global _news_by_symbol_store
+    _news_by_symbol_store = dict(by_symbol or {})
 
 
 def set_news_sentiment(score: float | None, commentary: str = "—",
@@ -215,7 +222,8 @@ def get_news() -> dict:
         "multiplier": round(mult, 2),
         "effect_pct": round((mult - 1) * 100, 1),   # effet sur la taille des NOUVELLES entrees
         "headlines": _news_headlines,
-        "by_symbol": news_by_symbol(),               # {SYM: [titres mentionnant cet actif]}
+        # par-crypto : requetes Google News FR dediees si dispo, sinon matching mots-cles des titres globaux
+        "by_symbol": _news_by_symbol_store if _news_by_symbol_store else news_by_symbol(),
         "updated_at": _news_ts,
     }
 

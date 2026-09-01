@@ -21,6 +21,7 @@ import asyncio
 import os
 import re
 import time
+import urllib.parse
 from xml.etree import ElementTree as ET
 
 import structlog
@@ -36,10 +37,18 @@ log = structlog.get_logger()
 CHECK_INTERVAL_S  = int(os.getenv("NEWS_CHECK_INTERVAL_S", "3600"))   # 1h
 NOTIFY_ON_CHANGE  = float(os.getenv("NEWS_NOTIFY_THRESHOLD", "0.3"))  # notif si |Δscore| > 0.3
 
+# Flux FR generalistes : sentiment GLOBAL + titres marche (en francais).
 RSS_SOURCES = [
-    ("CoinDesk",      "https://feeds.feedburner.com/CoinDesk"),
-    ("CoinTelegraph", "https://cointelegraph.com/rss"),
+    ("Cryptoast",       "https://cryptoast.fr/feed/"),
+    ("Journal du Coin", "https://journalducoin.com/feed/"),
+    ("Cointribune",     "https://www.cointribune.com/feed/"),
 ]
+
+# Requetes Google News (FR) par crypto -> news PAR ACTIF dans l'appli (chaque bot les siennes).
+SYMBOL_QUERIES = {
+    "BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana crypto", "XRP": "XRP Ripple",
+    "DOGE": "Dogecoin", "ADA": "Cardano crypto", "AVAX": "Avalanche AVAX", "LINK": "Chainlink crypto",
+}
 
 
 async def _fetch_rss(url: str) -> list[str]:
@@ -76,6 +85,51 @@ async def fetch_all_headlines() -> list[str]:
             t = re.sub(r"<[^>]+>", "", t)
             headlines.append(f"[{src}] {t}")
     return headlines[:20]   # max 20 titres
+
+
+def _gnews_url(query: str) -> str:
+    q = urllib.parse.quote(query + " when:14d")   # fenetre 14 jours
+    return f"https://news.google.com/rss/search?q={q}&hl=fr&gl=FR&ceid=FR:fr"
+
+
+async def _fetch_gnews(query: str, n: int = 5) -> list[str]:
+    """Titres FR recents pour une requete (Google News RSS). Format retour : '[Source] Titre'."""
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla/5.0 kairos-news"}) as s:
+            async with s.get(_gnews_url(query), timeout=aiohttp.ClientTimeout(total=12)) as r:
+                if r.status != 200:
+                    return []
+                xml_text = await r.text()
+        root = ET.fromstring(xml_text)
+        out: list[str] = []
+        for item in root.iter("item"):
+            t = item.find("title")
+            if t is None or not t.text:
+                continue
+            title = re.sub(r"<[^>]+>", "", t.text).strip()
+            src = ""
+            if " - " in title:                    # Google News formate "Titre - Source"
+                title, src = title.rsplit(" - ", 1)
+                title, src = title.strip(), src.strip()
+            out.append(f"[{src}] {title}" if src else title)
+            if len(out) >= n:
+                break
+        return out
+    except Exception as exc:
+        log.warning("gnews_fetch_failed", query=query, error=str(exc))
+        return []
+
+
+async def fetch_per_symbol_news() -> dict:
+    """News FR par crypto : une requete Google News par actif (map SYMBOL_QUERIES)."""
+    out: dict = {}
+    for sym, query in SYMBOL_QUERIES.items():
+        titles = await _fetch_gnews(query, n=5)
+        if titles:
+            out[sym] = titles
+        await asyncio.sleep(0.4)   # anti rate-limit
+    return out
 
 
 async def score_sentiment(headlines: list[str]) -> tuple[float, str] | None:
@@ -118,14 +172,21 @@ async def score_sentiment(headlines: list[str]) -> tuple[float, str] | None:
 
 
 async def update_sentiment_once() -> dict | None:
-    """Fetch + score + publish. Retourne le resultat ou None."""
+    """Fetch (global FR + par-crypto FR) + score + publish. Retourne le resultat ou None."""
     headlines = await fetch_all_headlines()
+    by_sym = await fetch_per_symbol_news()
+    # Les titres par-crypto n'ont PAS besoin de Claude -> on les publie tout de suite :
+    # l'appli montre des news par bot meme si le scoring IA echoue.
+    trading_state.set_news_by_symbol(by_sym)
+
     if not headlines:
-        log.warning("news_sentiment_no_headlines")
+        log.warning("news_sentiment_no_headlines", n_symbols=len(by_sym))
         return None
 
     scored = await score_sentiment(headlines)
     if not scored:
+        # Pas de score IA (Claude indispo) : on garde les titres globaux pour l'appli.
+        trading_state.set_news_sentiment(None, "—", headlines)
         return None
 
     score, commentary = scored
@@ -134,6 +195,7 @@ async def update_sentiment_once() -> dict | None:
     log.info("news_sentiment_updated",
              score=round(score, 2),
              n_headlines=len(headlines),
+             n_symbols=len(by_sym),
              commentary=commentary[:80])
 
     return {"score": score, "commentary": commentary,
