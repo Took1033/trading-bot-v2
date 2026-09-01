@@ -298,6 +298,12 @@ main{padding:16px 16px 8px;max-width:640px;margin:0 auto;}
 .news-item::before{content:"›";position:absolute;left:2px;color:var(--acc);font-weight:700;}
 .news-src{color:var(--mut);}
 .news-meta{color:var(--mut);font-size:.72rem;margin-top:11px;}
+.news-gauge{position:relative;height:7px;border-radius:5px;margin:12px 0 5px;
+  background:linear-gradient(90deg,var(--neg) 0%,var(--warn) 50%,var(--pos) 100%);opacity:.9;}
+.news-gauge .mk{position:absolute;top:50%;width:14px;height:14px;border-radius:50%;background:var(--ink);
+  border:2px solid var(--surf);transform:translate(-50%,-50%);box-shadow:0 1px 5px rgba(0,0,0,.55);
+  transition:left .5s cubic-bezier(.22,1,.36,1);}
+.news-scale{display:flex;justify-content:space-between;font-size:.66rem;color:var(--mut);letter-spacing:.02em;}
 </style></head><body>
 
 <div id="bar">
@@ -837,6 +843,7 @@ function renderNews(nw){
   }
   const s=nw.score, eff=nw.effect_pct||0;
   const dot = s>=0.2?'var(--pos)': s<=-0.2?'var(--neg)':'var(--warn)';
+  const gp = Math.max(3, Math.min(97, (s+1)/2*100));   // position du curseur sur la jauge -1..+1
   let effTxt;
   if(eff>0) effTxt='➜ Le bot prend des positions <b>'+eff+'% plus grosses</b> (news porteuses).';
   else if(eff<0) effTxt='➜ Le bot prend des positions <b>'+Math.abs(eff)+'% plus petites</b> (prudence).';
@@ -849,7 +856,9 @@ function renderNews(nw){
   el.innerHTML=
     '<div class="news-head"><span class="news-dot" style="background:'+dot+'"></span>'+
       'Ambiance : '+esc((nw.label||'').toUpperCase())+
-      '<span class="news-score">'+(s>0?'+':'')+s.toFixed(2)+' <span style="color:var(--mut)">/ −1…+1</span></span></div>'+
+      '<span class="news-score">'+(s>0?'+':'')+s.toFixed(2)+'</span></div>'+
+    '<div class="news-gauge"><span class="mk" style="left:'+gp+'%"></span></div>'+
+    '<div class="news-scale"><span>baissier</span><span>neutre</span><span>haussier</span></div>'+
     '<div class="news-effect">'+effTxt+'</div>'+
     ((nw.commentary&&nw.commentary!=='—')?'<div class="news-com">« '+esc(nw.commentary)+' »</div>':'')+
     (heads?'<div class="news-list">'+heads+'</div>':'')+
