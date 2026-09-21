@@ -31,7 +31,7 @@ from agents.dynamic_bot  import DynamicBot
 from agents.memory_agent import MemoryAgent
 from agents.orchestrator import Orchestrator
 from agents.trend_bot    import TrendBot
-from interfaces.coinbase_client import CoinbaseClient
+from interfaces.coinbase_client import CoinbaseClient, UnsellableDustError
 from bot_config import load_bots_config, save_bots_config, symbol_exists, validate_symbol_format
 
 load_dotenv()
@@ -332,6 +332,30 @@ class BotSwarm:
             avg_price = pos.get("avg_price", 0.0) or 0.0
             try:
                 order = await self._coinbase.place_order(symbol, "sell", qty, force=True)
+            except UnsellableDustError as exc:
+                # Residu sous le pas de cotation (base_size flooree a 0) : Coinbase
+                # refusera TOUJOURS l'ordre. On le solde LOCALEMENT — comme la sortie
+                # auto de TrendBot (_exit) — au lieu de boucler en force_close_failed a
+                # chaque clic. Aucune vente reelle, aucun ordre reseau, aucune
+                # exposition elargie : on cesse juste de suivre une poussiere
+                # invendable. Le bot RESTE EN PAUSE (pause() ci-dessus, non annulee) :
+                # cela respecte l'intention d'une cloture manuelle et evite un rachat
+                # au cycle suivant si le prix est encore > SMA50.
+                self._coinbase.forget_position(symbol)
+                log.info("force_close_dust_dropped", bot_id=bot_id, symbol=symbol,
+                         qty=round(qty, 8), reason=str(exc))
+                try:
+                    from interfaces import notifier
+                    await notifier.notify(
+                        f"🧹 *{symbol}* — résidu invendable soldé\n"
+                        f"`{qty:.8f}` sous le pas de cotation : position considérée close.\n"
+                        f"_Bot_ `{bot_id}` _laissé en pause._"
+                    )
+                except Exception:
+                    pass
+                return {"ok": True, "bot_id": bot_id, "symbol": symbol,
+                        "qty": qty, "price": 0.0, "pnl_pct": 0.0,
+                        "paused": True, "dust": True}
             except Exception as exc:
                 # La vente a echoue : NE PAS laisser le bot en pause, sinon ses sorties
                 # automatiques (stop/trailing/retournement SMA) restent DESACTIVEES et la
