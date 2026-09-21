@@ -3,7 +3,8 @@
 
   Usage (depuis le dossier du bot) :
     .\kairos-deploy.ps1            # redemarre le bot (apres edition config/.env)
-    .\kairos-deploy.ps1 -Merge     # merge la branche de dev PUIS redemarre
+    .\kairos-deploy.ps1 -Merge     # merge la branche de dev (defaut) PUIS redemarre
+    .\kairos-deploy.ps1 -Merge -Branch <nom>   # merge une branche PRECISE puis redemarre
 
   Ce que ca fait, de facon fiable :
     - (optionnel) git merge --ff-only de la branche de dev
@@ -11,10 +12,12 @@
     - refuse de demarrer si un orphelin survit (evite la double instance = double ordre)
     - demarre + VERIFIE : instance unique + dashboard qui repond
 #>
-param([switch]$Merge)
+param([switch]$Merge, [string]$Branch = "claude/bot-trading-memory-97306b")
 
 Set-Location "C:\Users\Brice Cuny\OneDrive\Bureau\bots"
-$branch = "claude/bot-trading-memory-97306b"
+# Le nom etait code en dur -> un -Merge mergeait TOUJOURS la meme (mauvaise) branche.
+# Desormais surchargeable : .\kairos-deploy.ps1 -Merge -Branch claude/ma-branche
+$branch = $Branch
 
 function Get-BotProcs {
     Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" |
