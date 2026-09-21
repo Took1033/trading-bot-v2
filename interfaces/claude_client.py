@@ -9,8 +9,8 @@ Wrapper minimal autour de anthropic.AsyncAnthropic avec :
 
 Calibrage selon CLAUDE.md :
   - Haiku 4.5  | low    | logs, daily reports, validation signaux
-  - Sonnet 4.6 | medium | analyse, summaries, Q&A user
-  - Opus 4.7   | xhigh  | conception alpha, debug cross-agent
+  - Sonnet 5   | medium | analyse, summaries, Q&A user
+  - Opus 5     | xhigh  | conception alpha, debug cross-agent
 """
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ ENABLED           = bool(ANTHROPIC_API_KEY)
 
 # Modeles : noms exacts (cf CLAUDE.md)
 MODEL_HAIKU  = "claude-haiku-4-5-20251001"
-MODEL_SONNET = "claude-sonnet-4-6"
-MODEL_OPUS   = "claude-opus-4-7"
+MODEL_SONNET = "claude-sonnet-5"
+MODEL_OPUS   = "claude-opus-5"
 
 # Cache des completions (cle = hash(model + prompt + max_tokens))
 _cache: dict[str, tuple[float, str]] = {}

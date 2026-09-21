@@ -31,9 +31,11 @@ curve-fitting en capital réel.** Ce protocole rend ce test obligatoire.
    trouve un paramètre qui « améliore » l'historique — c'est de la sur-optimisation,
    pas un edge.
 2. **Juger le mauvais objet.** Le rapport de preuve mesure l'alpha du **signal**,
-   actif par actif, all-in. Le produit live est un **book** (swarm + cap 6 %,
-   ~94 % en cash). Une décision qui reshape le book (couper des bots, changer le cap)
-   doit être validée **au niveau book**, pas sur un backtest single-asset.
+   actif par actif, all-in. Le produit live est un **book** (swarm + cap combiné ;
+   valeur LIVE réelle ≈ **72 %**, sizing **12 %/position** — cf. `.env`, lignes à
+   **dédupliquer** : le cap a dérivé 6 %→40→60→72 par empilement, la dernière ligne
+   gagne). Une décision qui reshape le book (couper des bots, changer le cap) doit
+   être validée **au niveau book**, pas sur un backtest single-asset.
 
 ---
 
@@ -77,7 +79,7 @@ de régime, univers de bots) ne change sans que **les 7** soient satisfaites :
 | Décision | Ce que dit la preuve actuelle | Ce qu'il manque avant d'agir |
 |---|---|---|
 | **Activer la bande 1 %** | Mécanisme sain (moins de whipsaw), mais **ne bat pas le flip-strict OOS** (12/25 fenêtres). Le « +22 pts » est in-sample. | Un plateau OOS clair (condition 2). En l'état : **flip-strict reste le défaut** ; la bande est un candidat, pas une amélioration prouvée. |
-| **Couper les 4 alts non-prouvés** | « Non prouvé robuste » ≠ « perdant ». Au **niveau book** (cap 6 %), swarm vs BTC-concentré est un **vrai arbitrage** (swarm +rendt, BTC-conc +Sharpe/−DD/−complexité), aucun ne domine. | Le verdict est **instable** (ETH champion en juin, fragile en août). Couper = acte quasi-irréversible sur une mesure bruitée. Manque : plus de recul live + décision sur la **politique de risque par niveau de preuve** (sizing différencié, filtre de régime), pas sur le *nombre* de bots. |
+| **Couper les 4 alts non-prouvés** | « Non prouvé robuste » ≠ « perdant ». Au **niveau book** (cap live ≈ 72 %), swarm vs BTC-concentré est un **vrai arbitrage** (swarm +rendt, BTC-conc +Sharpe/−DD/−complexité), aucun ne domine. | Le verdict est **instable** (ETH champion en juin, fragile en août). Couper = acte quasi-irréversible sur une mesure bruitée. Manque : plus de recul live + décision sur la **politique de risque par niveau de preuve** (sizing différencié, filtre de régime), pas sur le *nombre* de bots. |
 | **Toucher au cap / sizing** | Non backtesté — c'est pourtant **la vraie variable de risque** du book. | Balayer le cap dans `run_backtest_portfolio.py` ; **confirmer d'abord les valeurs LIVE réelles** (`.env` gitignoré). |
 
 ---
